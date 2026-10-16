@@ -15,4 +15,4 @@ jobs:
       - run: ./clang-format-21_linux-amd64 --version
       - run: clang-tidy --version
       # - run: clang-format --dry-run --Werror B.cpp
-      - run: clang-tidy B.cpp
+      - run: clang-tidy B.cpp -- -std=c20 -I/usr/lib/gcc/x86_64-linux-gnu/13/include
