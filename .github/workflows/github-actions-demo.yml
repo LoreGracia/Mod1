@@ -11,5 +11,4 @@ jobs:
       - run: sha512sum -c SHA512SUMS --ignore-missing
       - run: chmod +x clang-format-21_linux-amd64
       - run: ./clang-format-21_linux-amd64 --version
-      - run: ls
-      - run: clang-format --dry-run --Werror Mod1/Testing.cpp
+      - run: clang-format --dry-run --Werror Testing.cpp
