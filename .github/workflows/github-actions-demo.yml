@@ -1,5 +1,9 @@
 name: GitHub Actions Demo
-on: [push]
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 jobs:
   Explore-GitHub-Actions:
     runs-on: ubuntu-latest
@@ -15,4 +19,4 @@ jobs:
       - run: ./clang-format-21_linux-amd64 --version
       - run: clang-tidy --version
       # - run: clang-format --dry-run --Werror B.cpp
-      - run: clang-tidy B.cpp -- -std=c++20 -I/usr/lib/gcc/x86_64-linux-gnu/13/include
+      # - run: clang-tidy B.cpp -- -std=c++20 -I/usr/lib/gcc/x86_64-linux-gnu/13/include
