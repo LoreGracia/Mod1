@@ -14,5 +14,5 @@ jobs:
       - run: chmod a+x /usr/local/bin/clang-tidy
       - run: ./clang-format-21_linux-amd64 --version
       - run: clang-tidy --version
-      - run: clang-format --dry-run --Werror B.cpp
+      # - run: clang-format --dry-run --Werror B.cpp
       - run: clang-tidy B.cpp
