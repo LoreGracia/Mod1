@@ -7,8 +7,13 @@ jobs:
       - uses: actions/checkout@v3
       - run: echo "🎉 The job was automatically triggered by a ${{ github.event_name }} event."
       - run: curl -fLO https://github.com/cpp-linter/clang-tools-static-binaries/releases/latest/download/clang-format-21_linux-amd64
+      - run: wget -qO /usr/local/bin/clang-tidy https://github.com/cpp-linter/clang-tools-static-binaries/releases/latest/download/clang-tidy-21_linux-amd64
       - run: curl -fLO https://github.com/cpp-linter/clang-tools-static-binaries/releases/latest/download/SHA512SUMS
       - run: sha512sum -c SHA512SUMS --ignore-missing
       - run: chmod +x clang-format-21_linux-amd64
+      - run: chmod a+x /usr/local/bin/clang-tidy
       - run: ./clang-format-21_linux-amd64 --version
-      - run: clang-format --dry-run --Werror A.cpp
+      - run: ./clang-tidy-21_linux-amd64 --version
+      - run: clang-tidy --version
+      - run: clang-format --dry-run --Werror B.cpp
+      - run: clang-tidy B.cpp
