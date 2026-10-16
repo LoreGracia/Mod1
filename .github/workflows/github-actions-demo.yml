@@ -5,3 +5,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: echo "🎉 The job was automatically triggered by a ${{ github.event_name }} event."
+      - run: curl -fLO https://github.com/cpp-linter/clang-tools-static-binaries/releases/latest/download/clang-format-21_linux-amd64
+      - run: curl -fLO https://github.com/cpp-linter/clang-tools-static-binaries/releases/latest/download/SHA512SUMS
+      - run: sha512sum -c SHA512SUMS --ignore-missing
+      - run: chmod +x clang-format-21_linux-amd64
+      - run: ./clang-format-21_linux-amd64 --version
