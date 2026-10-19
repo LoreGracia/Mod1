@@ -43,11 +43,7 @@ build/
 Build/
 build-*/
 
-# CMake generated files
-CMakeFiles/
-CMakeCache.txt
-cmake_install.cmake
-Makefile
+# CMake generated file
 install_manifest.txt
 compile_commands.json
 
@@ -66,3 +62,5 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+MOD1
