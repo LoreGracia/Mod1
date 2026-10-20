@@ -18,8 +18,6 @@ int main()
         return 1;
     }
 
-    if (DEBUG)
-        printf("Hola Lore\n");
     int screen = DefaultScreen(display);
 
     int visual_attribs[] =
@@ -114,7 +112,7 @@ int main()
     printf("Renderer: %s\n", glGetString(GL_RENDERER));
 
     // Limpiar
-    glClearColor(0.1f, 0.2f, 0.3f, 1.0f);
+    glClearColor(1, 1, 1, 1);
     glClear(GL_COLOR_BUFFER_BIT);
 
     glXSwapBuffers(display, window);
