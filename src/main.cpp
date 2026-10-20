@@ -6,13 +6,14 @@
 	#define DEBUG 0
 #endif
 
+#include<Input.hpp>
+
 typedef GLXContext (*PFNGLCREATECONTEXTATTRIBSARBPROC)
     (Display*, GLXFBConfig, GLXContext, Bool, const int*);
 
 int main() {
 	if (DEBUG)
 		printf("Hola Lore\n");
-
     Display* dpy = XOpenDisplay(NULL);
     if (!dpy) { fprintf(stderr, "no display\n"); return 1; }
     int screen = DefaultScreen(dpy);

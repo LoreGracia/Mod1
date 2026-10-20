@@ -108,6 +108,11 @@ DEP_DIR = .dep
 
 SOURCES := main.cpp
 INCLUDES := $(addprefix -I, ./inc)
+INCLUDES += $(addprefix -I, ./inc/Wrapper)
+INCLUDES += $(addprefix -I, ./inc/Wrapper/core)
+INCLUDES += $(addprefix -I, ./inc/Wrapper/math)
+INCLUDES += $(addprefix -I, ./inc/Wrapper/render)
+INCLUDES += $(addprefix -I, ./inc/Wrapper/scene)
 OBJS =  $(addprefix $(OBJ_DIR)/, $(SOURCES:.cpp=.o))
 DEPS = $(addprefix $(DEP_DIR)/, $(SOURCES:.cpp=.d))
 
