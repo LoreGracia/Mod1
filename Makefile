@@ -106,8 +106,17 @@ TEST_DIR = tests
 OBJ_DIR = .obj
 DEP_DIR = .dep
 
+SUB_DIR_OBJ = .obj/external .obj/external/src
+
 SOURCES := main.cpp
 INCLUDES := $(addprefix -I, ./inc)
+INCLUDES += $(addprefix -I, ./external/glad/include/)
+
+GLDIR = external/glad/src
+GLSOURCES := $(GLDIR)/gl.c
+GLOBJS := $(OBJ_DIR)/external/src/gl.o
+
+
 INCLUDES += $(addprefix -I, ./inc/Wrapper)
 INCLUDES += $(addprefix -I, ./inc/Wrapper/core)
 INCLUDES += $(addprefix -I, ./inc/Wrapper/math)
@@ -215,6 +224,7 @@ check_requirements: ## Verify that the system has everything needed to build
 $(OBJ_DIR):
 	@mkdir -p $(OBJ_DIR)
 	@$(foreach dir, $(OBJ_DIR), mkdir -p $(dir);)
+	@$(foreach dir, $(SUB_DIR_OBJ), mkdir -p $(dir);)
 	@$(foreach dir, $(DEP_DIR), mkdir -p $(dir);)
 	@printf "$(INFO) Created test object directory structure\n"
 
@@ -231,8 +241,17 @@ $(OBJ_DIR)/%.o:$(SRC_DIR)/%.cpp $(OBJ_DIR)
 		exit 1; \
 	fi
 
-$(NAME): $(OBJS)
-	@ if $(CXX) $(CXXFLAGS) $(INCLUDES) $(OBJS) $(LDLIBS) -o $(NAME); then \
+$(OBJ_DIR)/external/src/%.o: $(GLDIR)/%.c $(OBJ_DIR)
+	@printf "$(INFO) files: $< ...\n"
+	@if gcc $(INCLUDES) -c $< -o $@; then \
+		printf "$(SUCCESS) Created: $@\n"; \
+	else \
+		printf "$(ERROR) Failed to compile: $<\n"; \
+		exit 1; \
+	fi
+
+$(NAME): $(OBJS) $(GLOBJS)
+	@ if $(CXX) $(CXXFLAGS) $(INCLUDES) $(OBJS) $(GLOBJS) $(LDLIBS) -o $(NAME); then \
 		printf "$(SUCCESS) Created program: $(NAME)\n"; \
 	else \
 		printf "$(ERROR) when generated $(NAME)"; \
