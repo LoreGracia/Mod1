@@ -128,9 +128,16 @@ SCENE_DIR = $(WRAPPER_DIR)/scene
 SOURCES := main.cpp
 GLSOURCES := $(GLDIR)/gl.c $(GLDIR)/glx.c
 WRAPSOURCES :=	$(CORE_DIR)/WWindow.cpp \
-				$(RENDER_DIR)/Shader.cpp $(RENDER_DIR)/Mesh.cpp
+				$(RENDER_DIR)/Shader.cpp $(RENDER_DIR)/Mesh.cpp \
+				$(SCENE_DIR)/Camera.cpp
 
 INCLUDES := $(addprefix -I, ./inc)
+INCLUDES += $(addprefix -I, ./external/glm)
+INCLUDES += $(addprefix -I, ./external/glm/detail)
+INCLUDES += $(addprefix -I, ./external/glm/ext)
+INCLUDES += $(addprefix -I, ./external/glm/gtc)
+INCLUDES += $(addprefix -I, ./external/glm/gtx)
+INCLUDES += $(addprefix -I, ./external/glm/simd)
 INCLUDES += $(addprefix -I, ./external/glad/include/)
 INCLUDES += $(addprefix -I, ./Wrapper)
 INCLUDES += $(addprefix -I, ./Wrapper/core)
