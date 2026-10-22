@@ -14,8 +14,14 @@ public:
 	Mesh &operator=(const Mesh &)	= delete;
 
 	void upload(const std::vector<float> &vertices,
-				const std::vector<uint32_t> &indices,
-				GLenum mode = GL_TRIANGLES);
+		const std::vector<uint32_t> &indices,
+		GLenum mode = GL_TRIANGLES);
+
+	void upload(const std::vector<float>&    positions,
+		const std::vector<float>&    colors,
+		const std::vector<uint32_t>& indices,
+		GLenum mode = GL_TRIANGLES);
+	
 	void draw() const;
 
 	static Mesh triangle();

@@ -52,6 +52,54 @@ void Mesh::upload(const std::vector<float>& v,
 	glBindVertexArray(0);
 }
 
+void Mesh::upload(const std::vector<float>& positions,
+				const std::vector<float>& colors,
+				const std::vector<uint32_t>& indices,
+				GLenum mode)
+{
+	release();
+	m_mode = mode;
+	m_indexCount = (GLsizei)indices.size();
+
+	const std::size_t vertexCount = positions.size() / 3;
+	std::vector<float> interleaved;
+	interleaved.reserve(vertexCount * 6);
+	for (std::size_t i = 0; i < vertexCount; ++i) {
+		interleaved.push_back(positions[i*3 + 0]);
+		interleaved.push_back(positions[i*3 + 1]);
+		interleaved.push_back(positions[i*3 + 2]);
+		interleaved.push_back(colors[i*3 + 0]);
+		interleaved.push_back(colors[i*3 + 1]);
+		interleaved.push_back(colors[i*3 + 2]);
+	}
+
+	glGenVertexArrays(1, &m_vao);
+	glGenBuffers(1, &m_vbo);
+	glGenBuffers(1, &m_ebo);
+	glBindVertexArray(m_vao);
+
+	glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+	glBufferData(GL_ARRAY_BUFFER,
+				interleaved.size() * sizeof(float),
+				interleaved.data(), GL_STATIC_DRAW);
+
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_ebo);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+				indices.size() * sizeof(uint32_t),
+				indices.data(), GL_STATIC_DRAW);
+
+	const GLsizei stride = 6 * sizeof(float);
+
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)0);
+	glEnableVertexAttribArray(0);
+
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride,
+						(void*)(3 * sizeof(float)));
+	glEnableVertexAttribArray(1);
+
+	glBindVertexArray(0);
+}
+
 void Mesh::draw() const {
 	glBindVertexArray(m_vao);
 	glDrawElements(m_mode, m_indexCount, GL_UNSIGNED_INT, nullptr);
