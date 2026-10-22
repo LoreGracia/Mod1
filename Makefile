@@ -43,7 +43,7 @@ endif
 ifeq ($(PLATFORM),LINUX)
 	CXX      := g++
 	LDLIBS   := -lGL -lX11 -lpthread -ldl
-	CXXFLAGS += -DPLATFORM_LINUX -Wall -Werror -Wextra -g -pedantic #-fsanitize=address
+	CXXFLAGS += -DPLATFORM_LINUX -Wall -Werror -Wextra -g -pedantic -fsanitize=address
 else ifeq ($(PLATFORM),WINDOWS_MSYS)
 	CXX      := g++
 	LDLIBS   := -lopengl32 -lgdi32
@@ -96,7 +96,7 @@ TOOLCHAIN_PROBE_SRC := int main(void){return 0;}
 #                               BUILD VARIABLES                                #
 ################################################################################
 
-NAME = MOD1
+NAME = mod1
 RMV = rm -rf
 CLEAR = $(OBJ_DIR) $(DEP_DIR)
 
@@ -106,17 +106,18 @@ TEST_DIR = tests
 OBJ_DIR = .obj
 DEP_DIR = .dep
 
-SUB_DIR_OBJ =	$(OBJ_DIR)/external $(OBJ_DIR)/external/src \
+SUB_DIR_OBJ =	$(OBJ_DIR)/$(EXTER_DIR) $(OBJ_DIR)/$(GLDIR) \
 				$(OBJ_DIR)/$(WRAPPER_DIR) $(OBJ_DIR)/$(CORE_DIR) \
 				$(OBJ_DIR)/$(MATH_DIR) $(OBJ_DIR)/$(RENDER_DIR) \
 				$(OBJ_DIR)/$(SCENE_DIR)
 
-SUB_DIR_DEP =	$(DEP_DIR)/external $(DEP_DIR)/external/src \
+SUB_DIR_DEP =	$(DEP_DIR)/$(EXTER_DIR) $(DEP_DIR)/$(GLDIR) \
 				$(DEP_DIR)/$(WRAPPER_DIR) $(DEP_DIR)/$(CORE_DIR) \
 				$(DEP_DIR)/$(MATH_DIR) $(DEP_DIR)/$(RENDER_DIR) \
 				$(DEP_DIR)/$(SCENE_DIR)
 
-GLDIR = external/glad/src
+EXTER_DIR = external
+GLDIR = $(EXTER_DIR)/glad/src
 
 WRAPPER_DIR = Wrapper
 CORE_DIR = $(WRAPPER_DIR)/core
@@ -125,8 +126,9 @@ RENDER_DIR = $(WRAPPER_DIR)/render
 SCENE_DIR = $(WRAPPER_DIR)/scene
 
 SOURCES := main.cpp
-GLSOURCES := $(GLDIR)/gl.c
-WRAPSOURCES := $(WRAPPER_DIR)/core/WWindow.cpp
+GLSOURCES := $(GLDIR)/gl.c $(GLDIR)/glx.c
+WRAPSOURCES :=	$(CORE_DIR)/WWindow.cpp \
+				$(RENDER_DIR)/Shader.cpp $(RENDER_DIR)/Mesh.cpp
 
 INCLUDES := $(addprefix -I, ./inc)
 INCLUDES += $(addprefix -I, ./external/glad/include/)
@@ -139,7 +141,8 @@ INCLUDES += $(addprefix -I, ./Wrapper/scene)
 OBJS =  $(addprefix $(OBJ_DIR)/, $(SOURCES:.cpp=.o))
 DEPS = $(addprefix $(DEP_DIR)/, $(SOURCES:.cpp=.d))
 
-GLOBJS := $(OBJ_DIR)/external/src/gl.o
+GLOBJS = $(addprefix $(OBJ_DIR)/, $(GLSOURCES:.c=.o))
+GLDEP = $(addprefix $(OBJ_DIR)/, $(GLSOURCES:.c=.d))
 
 WRAPOBJS = $(addprefix $(OBJ_DIR)/, $(WRAPSOURCES:.cpp=.o))
 WRAPDEP = $(addprefix $(DEP_DIR)/, $(WRAPSOURCES:.cpp=.d))
@@ -275,9 +278,9 @@ define compile_cpp
 endef
 
 define compile_c
-	@mkdir -p $(dir $@)
 	@printf "$(INFO) files:  $< ...\n"
-	@if gcc $(INCLUDES) -c $< -o $@; then \
+	@if gcc $(INCLUDES) -MMD -MF $(DEP_DIR)/$(1)$*.d -MT $@ \
+		-c $< -o $@; then \
 		printf "$(SUCCESS) Created: $@\n"; \
 	else \
 		printf "$(ERROR) Failed to compile: $<\n"; \
@@ -291,9 +294,8 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp $(OBJ_DIR) | $(DEP_DIR)
 $(OBJ_DIR)/$(WRAPPER_DIR)/%.o: $(WRAPPER_DIR)/%.cpp $(OBJ_DIR) | $(DEP_DIR)
 	$(call compile_cpp,$(WRAPPER_DIR)/)
 
-$(OBJ_DIR)/external/src/%.o: $(GLDIR)/%.c $(OBJ_DIR) | $(DEP_DIR)
+$(OBJ_DIR)/external/glad/src/%.o: $(GLDIR)/%.c $(OBJ_DIR) | $(DEP_DIR)
 	$(call compile_c,$(GLDIR)/)
-
 
 $(NAME): $(OBJS) $(GLOBJS) $(WRAPOBJS)
 	@ if $(CXX) $(CXXFLAGS) $(INCLUDES) $(OBJS) $(GLOBJS) $(WRAPOBJS) $(LDLIBS) -o $(NAME); then \
@@ -329,5 +331,6 @@ fclean: clean ## Perform a full cleanup
 re: fclean all ## Rebuild everything from mod1 (equivalent to fclean followed by all).
 
 -include $(DEPS)
+-include $(GLDEP)
 -include $(WRAPDEP)
 .SILENT:
