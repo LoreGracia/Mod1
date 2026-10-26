@@ -9,7 +9,8 @@ Mesh::Mesh(Mesh &&o) noexcept
 	m_indexCount(o.m_indexCount), m_mode(o.m_mode)
 { o.m_vao = o.m_vbo = o.m_ebo = 0; o.m_indexCount = 0; }
 
-Mesh& Mesh::operator=(Mesh&& o) noexcept {
+Mesh& Mesh::operator=(Mesh &&o) noexcept
+{
 	if (this != &o) {
 		release();
 		m_vao = o.m_vao; m_vbo = o.m_vbo; m_ebo = o.m_ebo;
@@ -19,7 +20,8 @@ Mesh& Mesh::operator=(Mesh&& o) noexcept {
 	return *this;
 }
 
-void Mesh::release() {
+void Mesh::release()
+{
 	if (m_ebo)
 		glDeleteBuffers(1, &m_ebo);
 	if (m_vbo)
@@ -31,7 +33,8 @@ void Mesh::release() {
 
 void Mesh::upload(const std::vector<float>& v,
 				const std::vector<uint32_t>& idx,
-				GLenum mode) {
+				GLenum mode)
+{
 	release();
 	m_mode = mode;
 	m_indexCount = (GLsizei)idx.size();
@@ -52,7 +55,6 @@ void Mesh::upload(const std::vector<float>& v,
 	glBindVertexArray(0);
 }
 
-#include <iostream>
 void Mesh::upload(const std::vector<float>& positions,
 				const std::vector<float>& colors,
 				const std::vector<uint32_t>& indices,
@@ -101,13 +103,15 @@ void Mesh::upload(const std::vector<float>& positions,
 	glBindVertexArray(0);
 }
 
-void Mesh::draw() const {
+void Mesh::draw() const
+{
 	glBindVertexArray(m_vao);
 	glDrawElements(m_mode, m_indexCount, GL_UNSIGNED_INT, nullptr);
 	glBindVertexArray(0);
 }
 
-Mesh Mesh::triangle() {
+Mesh Mesh::triangle()
+{
 	Mesh m;
 
 	m.upload({
@@ -121,9 +125,11 @@ Mesh Mesh::triangle() {
 	return m;
 }
 
-Mesh Mesh::plane(float s) {
+Mesh Mesh::plane(float s)
+{
 	Mesh m;
 	float h = s * 0.5f;
+
 	m.upload({-h,0,-h,  h,0,-h,  h,0,h,  -h,0,h}, {0,1,2, 2,3,0});
 	return m;
 }

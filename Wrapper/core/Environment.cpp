@@ -7,20 +7,23 @@
 #include <cstdio>
 #include <stdexcept>
 
-Environment::~Environment() {
+Environment::~Environment()
+{
 	stop();
 	for (auto& t : m_threads)
 		if (t.joinable()) t.join();
 }
 
-WWindow& Environment::addWindow(WWindow::Config& cfg) {
+WWindow& Environment::addWindow(WWindow::Config &cfg)
+{
 	if (m_running.load())
 		throw std::runtime_error("addWindow() after run()");
 	m_windows.emplace_back(new WWindow(cfg));
 	return *m_windows.back();
 }
 
-void Environment::run() {
+void Environment::run()
+{
 
 	if (m_windows.empty())
 		return;
@@ -48,7 +51,8 @@ void Environment::run() {
 	cleanupGpuResources();
 }
 
-void Environment::windowThread(WWindow* win) {
+void Environment::windowThread(WWindow* win)
+{
 	win->makeCurrent();
 
 	if (m_init && win != m_windows.front().get())
@@ -72,7 +76,8 @@ void Environment::windowThread(WWindow* win) {
 	win->releaseCurrent();
 }
 
-void Environment::cleanupGpuResources() {
+void Environment::cleanupGpuResources()
+{
 	if (m_gpuResources.empty() || m_windows.empty())
 		return;
 	m_windows.front()->makeCurrent();

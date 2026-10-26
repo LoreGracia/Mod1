@@ -5,23 +5,23 @@
 class Camera {
 	public:
 		Camera() = default;
-		Camera(const glm::vec3& position,
-			const glm::vec3& target,
-			const glm::vec3& up = {0,1,0});
+		Camera(const glm::vec3 &position,
+			const glm::vec3 &target,
+			const glm::vec3 &up = {0,1,0});
 
 		glm::mat4 view() const;
 		glm::mat4 projection(float aspect) const;
 
-		void move(const glm::vec3& delta);
-		void lookAt(const glm::vec3& target);
-		void setPosition(const glm::vec3& p) { m_position = p; }
+		void move(const glm::vec3 &delta);
+		void lookAt(const glm::vec3 &target);
+		void setPosition(const glm::vec3 &p) { m_position = p; }
 		void setFov(float deg)               { m_fov = deg; }
 		void setClip(float n, float f)       { m_near = n; m_far = f; }
 
-		void setOrbitTarget(const glm::vec3& t) { m_target = t; }
+		void setOrbitTarget(const glm::vec3 &t) { m_target = t; }
 		void orbit(float dYaw, float dPitch, float dDist);
 
-		const glm::vec3& position() const { return m_position; }
+		const glm::vec3 &position() const { return m_position; }
 
 		glm::vec3 forward() const;
 		glm::vec3 right() const;

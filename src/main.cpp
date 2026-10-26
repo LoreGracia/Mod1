@@ -738,8 +738,6 @@ int main() {
             if (in.isKeyDown(XK_d)) move += right;
             if (in.isKeyDown(XK_a)) move -= right;
 
-			// if (in.isMouseButtonDown(Button3) && in.mouseDeltaY() != 0.f )
-			// 	st.cam.orbit(0.f, in.mouseDeltaY() * 0.5f, 0.f);
 	
 			if (in.isMouseButtonDown(Button3)) {
 				const float panSens = 0.02f;         // píxeles → unidades de mundo

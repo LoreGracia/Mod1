@@ -8,14 +8,17 @@
 Entity::Entity(std::shared_ptr<Mesh> m, std::shared_ptr<Shader> s)
 	: m_mesh(std::move(m)), m_shader(std::move(s)) {}
 
-void Entity::update(float dt) {
+void Entity::update(float dt)
+{
 	m_transform.position += velocity * dt;
 	float len = glm::length(angularVel);
+
 	if (len > 1e-6f)
 		m_transform.rotate(glm::degrees(len) * dt, angularVel / len);
 }
 
-void Entity::render(const glm::mat4 &viewProj) {
+void Entity::render(const glm::mat4 &viewProj)
+{
 	if (!m_shader || !m_mesh)
 		return;
 	m_shader->use();

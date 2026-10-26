@@ -1,7 +1,8 @@
 #include "core/Input.hpp"
 #include <X11/keysym.h>
 
-void Input::beginFrame() {
+void Input::beginFrame()
+{
 	m_keysPressed.clear();
 	m_keysReleased.clear();
 	m_buttonsPressed.clear();
@@ -23,25 +24,25 @@ void Input::reset() {
 	m_scrollDelta = 0.f;
 }
 
-void Input::handleEvent(const XEvent& ev) {
+void Input::handleEvent(const XEvent& ev)
+{
 	switch (ev.type) {
 		case KeyPress: {
 			KeySym sym = XLookupKeysym(const_cast<XKeyEvent*>(&ev.xkey), 0);
 
-			if (m_keysDown.insert(sym).second)     // solo si no estaba
+			if (m_keysDown.insert(sym).second)
 				m_keysPressed.insert(sym);
 			break;
 		}
 		case KeyRelease: {
 			KeySym sym = XLookupKeysym(const_cast<XKeyEvent*>(&ev.xkey), 0);
 
-			if (m_keysDown.erase(sym))              // solo si estaba
+			if (m_keysDown.erase(sym))
 				m_keysReleased.insert(sym);
 			break;
 		}
 
 		case ButtonPress: {
-			// Botones 4 y 5 en X11 = rueda del ratón (no son botones "reales")
 			if (ev.xbutton.button == Button4) {
 				m_scrollDelta += 1.f;
 				break;
@@ -59,7 +60,7 @@ void Input::handleEvent(const XEvent& ev) {
 		}
 		case ButtonRelease: {
 			if (ev.xbutton.button == Button4 || ev.xbutton.button == Button5)
-				break;                              // la rueda no tiene "release"
+				break;
 			int b = ev.xbutton.button;
 			if (m_buttonsDown.erase(b))
 				m_buttonsReleased.insert(b);
@@ -77,8 +78,6 @@ void Input::handleEvent(const XEvent& ev) {
 		}
 
 		case FocusOut:
-			// Si la ventana pierde el foco, las teclas "pulsadas" se quedan
-			// colgadas porque el KeyRelease se entrega a otra ventana.
 			reset();
 			break;
 

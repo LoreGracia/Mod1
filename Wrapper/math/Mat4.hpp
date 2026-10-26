@@ -29,7 +29,8 @@ struct Mat4 {
 
 	Mat4 operator*(const Mat4& o) const { return multiply(*this, o); }
 
-	static Mat4 rotationX(float deg) {
+	static Mat4 rotationX(float deg)
+	{
 		float r = deg * 3.14159265f / 180.f;
 		float c = std::cos(r), s = std::sin(r);
 		Mat4 out;
@@ -38,7 +39,8 @@ struct Mat4 {
 		return out;
 	}
 
-	static Mat4 rotationY(float deg) {
+	static Mat4 rotationY(float deg)
+	{
 		float r = deg * 3.14159265f / 180.f;
 		float c = std::cos(r), s = std::sin(r);
 		Mat4 out;
@@ -47,7 +49,8 @@ struct Mat4 {
 		return out;
 	}
 
-	static Mat4 rotationZ(float deg) {
+	static Mat4 rotationZ(float deg)
+	{
 		float r = deg * 3.14159265f / 180.f;
 		float c = std::cos(r), s = std::sin(r);
 		Mat4 out;
@@ -56,7 +59,8 @@ struct Mat4 {
 		return out;
 	}
 
-	static Mat4 lookAt(const Vec3& eye, const Vec3& target, const Vec3& up) {
+	static Mat4 lookAt(const Vec3& eye, const Vec3& target, const Vec3& up)
+	{
 		Vec3 f = (target - eye).normalized();
 		Vec3 s = cross(f, up).normalized();
 		Vec3 u = cross(s, f);
@@ -69,7 +73,8 @@ struct Mat4 {
 		return r;
 	}
 
-	static Mat4 perspective(float fovDeg, float aspect, float nearZ, float farZ) {
+	static Mat4 perspective(float fovDeg, float aspect, float nearZ, float farZ)
+	{
 		float f = 1.f / std::tan(fovDeg * 3.14159265f / 360.f);
 		Mat4 r;
 		r.m[0]  = f / aspect;

@@ -16,7 +16,7 @@ public:
 	Camera &camera() { return m_camera; }
 	const Camera& camera() const { return m_camera; }
 
-	const std::vector<std::shared_ptr<Entity>>	& entities() const { return m_entities; }
+	const std::vector<std::shared_ptr<Entity>>	&entities() const { return m_entities; }
 	std::vector<std::shared_ptr<Entity>>	&entities() { return m_entities; }
 
 private:

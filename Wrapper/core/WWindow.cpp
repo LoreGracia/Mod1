@@ -117,7 +117,8 @@ WWindow::WWindow(Config &conf)
 	XMapWindow(m_display, m_xwindow);
 }
 
-WWindow::~WWindow() {
+WWindow::~WWindow()
+{
 	if (m_display && m_context) {
 		glXMakeCurrent(m_display, None, nullptr);
 		glXDestroyContext(m_display, m_context);
@@ -144,7 +145,8 @@ void WWindow::swapBuffers() {
 	glXSwapBuffers(m_display, m_xwindow);
 }
 
-bool WWindow::pollEvents() {
+bool WWindow::pollEvents()
+{
 	m_input.beginFrame();
 
 	while (XPending(m_display)) {
@@ -178,7 +180,8 @@ bool WWindow::pollEvents() {
 	return !m_shouldClose.load();
 }
 
-bool WWindow::consumeResize(int& w, int& h) {
+bool WWindow::consumeResize(int &w, int &h)
+{
 	if (!m_needsResize)
 		return false;
 	w = m_width;

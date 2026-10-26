@@ -17,15 +17,20 @@ namespace {
 	}
 }
 
-Shader::~Shader() { if (m_program) glDeleteProgram(m_program); }
+Shader::~Shader()
+{
+	if (m_program)
+		glDeleteProgram(m_program);
+}
 
 Shader::Shader(Shader&& o) noexcept
     : m_program(o.m_program), m_uniformCache(std::move(o.m_uniformCache))
 { o.m_program = 0; }
 
-Shader &Shader::operator=(Shader&& o) noexcept {
+Shader &Shader::operator=(Shader &&o) noexcept {
     if (this != &o) {
-        if (m_program) glDeleteProgram(m_program);
+        if (m_program)
+			glDeleteProgram(m_program);
         m_program = o.m_program;
         m_uniformCache = std::move(o.m_uniformCache);
         o.m_program = 0;
@@ -33,9 +38,11 @@ Shader &Shader::operator=(Shader&& o) noexcept {
     return *this;
 }
 
-GLuint Shader::compile(GLenum type, const std::string& src) {
+GLuint Shader::compile(GLenum type, const std::string &src)
+{
     GLuint sh = glCreateShader(type);
     const char* c = src.c_str();
+
     glShaderSource(sh, 1, &c, nullptr);
     glCompileShader(sh);
 
@@ -53,7 +60,8 @@ GLuint Shader::compile(GLenum type, const std::string& src) {
     return sh;
 }
 
-bool Shader::loadFromSource(const std::string& v, const std::string& f) {
+bool Shader::loadFromSource(const std::string& v, const std::string& f)
+{
     GLuint vs = compile(GL_VERTEX_SHADER, v);
     if (!vs) return false;
     GLuint fs = compile(GL_FRAGMENT_SHADER, f);
@@ -68,28 +76,33 @@ bool Shader::loadFromSource(const std::string& v, const std::string& f) {
     glDeleteShader(fs);
 
     GLint ok = 0;
+
     glGetProgramiv(m_program, GL_LINK_STATUS, &ok);
     if (!ok) {
         GLint len = 0;
+
         glGetProgramiv(m_program, GL_INFO_LOG_LENGTH, &len);
         std::vector<char> log(len);
         glGetProgramInfoLog(m_program, len, nullptr, log.data());
         std::cerr << "Program link error:\n" << log.data() << "\n";
         glDeleteProgram(m_program); m_program = 0;
+
         return false;
     }
     m_uniformCache.clear();
     return true;
 }
 
-bool Shader::loadFromFile(const std::string& v, const std::string& f) {
+bool Shader::loadFromFile(const std::string &v, const std::string &f)
+{
     try {
 		return loadFromSource(readFile(v), readFile(f)); 
 	}
     catch (const std::exception& e) { std::cerr << e.what() << "\n"; return false; }
 }
 
-GLint Shader::location(const char* name) const {
+GLint Shader::location(const char *name) const
+{
     auto it = m_uniformCache.find(name);
 
     if (it != m_uniformCache.end())
