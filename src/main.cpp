@@ -467,157 +467,306 @@
 //     return 0;
 // }
 
+// #include <glad/gl.h>
+// #include <glad/glad_glx.h>
+// #include <X11/Xlib.h>
+// #include <X11/keysym.h>
+
+// #include <WWindow.hpp>
+// #include <Shader.hpp>
+// #include <Mesh.hpp>
+// #include <Camera.hpp>
+// #include <Transform.hpp>
+// #include <Entity.hpp>
+// #include <Scene.hpp>
+
+// #include <glm.hpp>
+// #include <type_ptr.hpp>
+
+// #include <cstdio>
+// #include <cmath>
+// #include <memory>
+// #include <vector>
+// #include <stdexcept>
+
+// // ── Datos del cubo coloreado (24 vértices, 6 caras) ──────────────────
+// static void uploadColoredCube(Mesh& m) {
+//     std::vector<float> pos = {
+//         -0.5f,-0.5f, 0.5f,   0.5f,-0.5f, 0.5f,   0.5f, 0.5f, 0.5f,  -0.5f, 0.5f, 0.5f,
+//          0.5f,-0.5f,-0.5f,  -0.5f,-0.5f,-0.5f,  -0.5f, 0.5f,-0.5f,   0.5f, 0.5f,-0.5f,
+//          0.5f,-0.5f, 0.5f,   0.5f,-0.5f,-0.5f,   0.5f, 0.5f,-0.5f,   0.5f, 0.5f, 0.5f,
+//         -0.5f,-0.5f,-0.5f,  -0.5f,-0.5f, 0.5f,  -0.5f, 0.5f, 0.5f,  -0.5f, 0.5f,-0.5f,
+//         -0.5f, 0.5f, 0.5f,   0.5f, 0.5f, 0.5f,   0.5f, 0.5f,-0.5f,  -0.5f, 0.5f,-0.5f,
+//         -0.5f,-0.5f,-0.5f,   0.5f,-0.5f,-0.5f,   0.5f,-0.5f, 0.5f,  -0.5f,-0.5f, 0.5f,
+//     };
+//     std::vector<float> col;
+//     auto pushColor = [&](float r, float g, float b) {
+//         for (int i = 0; i < 4; ++i) { col.push_back(r); col.push_back(g); col.push_back(b); }
+//     };
+//     pushColor(1.0f, 0.2f, 0.2f);   // Front  rojo
+//     pushColor(0.2f, 1.0f, 0.2f);   // Back   verde
+//     pushColor(0.2f, 0.4f, 1.0f);   // Right  azul
+//     pushColor(1.0f, 0.9f, 0.2f);   // Left   amarillo
+//     pushColor(1.0f, 0.2f, 1.0f);   // Top    magenta
+//     pushColor(0.2f, 1.0f, 1.0f);   // Bottom cian
+
+//     std::vector<uint32_t> idx;
+//     for (uint32_t f = 0; f < 6; ++f) {
+//         uint32_t b = f * 4;
+//         idx.insert(idx.end(), { b+0, b+1, b+2,  b+2, b+3, b+0 });
+//     }
+//     m.upload(pos, col, idx);
+// }
+
+// int main() {
+//     try {
+//         // ─── Ventana ──────────────────────────────────────────────────
+//         WWindow::Config cfg;
+//         cfg.title  = "Entity test — Esc to close";
+//         cfg.width  = 900;
+//         cfg.height = 600;
+
+//         WWindow win(cfg);
+//         win.makeCurrent();
+//         if (!gladLoadGL((GLADloadfunc)glXGetProcAddressARB)) {
+//             std::fprintf(stderr, "gladLoadGL failed\n");
+//             return 1;
+//         }
+//         std::printf("GL_VERSION: %s\n", (const char*)glGetString(GL_VERSION));
+
+//         // ─── Shader (uno solo, compartido por las 3 entidades) ────────
+//         auto shader = std::make_shared<Shader>();
+// 		if (!shader->loadFromSource(
+// 			"#version 330 core\n"
+// 			"layout(location = 0) in vec3 aPos;\n"
+// 			"layout(location = 1) in vec3 aColor;\n"
+// 			"uniform mat4 uModel;\n"
+// 			"uniform mat4 uViewProj;\n"
+// 			"out vec3 vColor;\n"
+// 			"void main() {\n"
+// 			"    vColor = aColor;\n"
+// 			"    gl_Position = uViewProj * uModel * vec4(aPos, 1.0);\n"
+// 			"}\n",
+// 			"#version 330 core\n"
+// 			"in vec3 vColor;\n"
+// 			"out vec4 FragColor;\n"
+// 			"void main() { FragColor = vec4(vColor, 1.0); }\n"))
+// 		{
+// 			std::fprintf(stderr, "shader failed\n");
+// 			return 1;
+// 		}
+
+//         // ─── Mesh (uno solo, compartido por las 3 entidades) ─────────
+//         auto cubeMesh = std::make_shared<Mesh>();
+//         uploadColoredCube(*cubeMesh);
+
+//         // ─── Tres entidades con transformaciones distintas ───────────
+//         auto e1 = std::make_shared<Entity>(cubeMesh, shader);
+//         e1->transform().position = {-2.f, 0.f, 0.f};   // izquierda
+//         e1->transform().scale    = {0.8f, 0.8f, 0.8f};
+
+//         auto e2 = std::make_shared<Entity>(cubeMesh, shader);
+//         e2->transform().position = { 0.f, 0.f, 0.f};   // centro
+//         // sin escala → 1,1,1
+
+//         auto e3 = std::make_shared<Entity>(cubeMesh, shader);
+//         e3->transform().position = { 2.f, 0.f, 0.f};   // derecha
+//         e3->transform().scale    = {1.2f, 1.2f, 1.2f};
+
+//         // ─── Estado GL ───────────────────────────────────────────────
+//         glEnable(GL_DEPTH_TEST);
+//         glEnable(GL_CULL_FACE);
+//         glCullFace(GL_BACK);
+//         glFrontFace(GL_CCW);
+
+//         // ─── Cámara ──────────────────────────────────────────────────
+//         Camera cam({0.f, 2.f, 8.f}, {0.f, 0.f, 0.f});
+
+//         glViewport(0, 0, win.width(), win.height());
+
+//         float t = 0.f;
+
+//         // ─── Bucle ───────────────────────────────────────────────────
+//         while (!win.shouldClose()) {
+//             if (!win.pollEvents()) break;
+
+//             int rw, rh;
+//             if (win.consumeResize(rw, rh))
+//                 glViewport(0, 0, rw, rh);
+
+//             glClearColor(0.10f, 0.15f, 0.20f, 1.0f);
+//             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+//             t += 0.016f;
+
+//             // Cada entidad se transforma de forma independiente
+//             e1->transform().rotate(45.f * 0.016f, {1.f, 0.f, 0.f});
+//             e2->transform().rotate(60.f * 0.016f, {0.f, 1.f, 0.f});
+//             e3->transform().rotate(45.f * 0.016f, {0.f, 0.f, 1.f});
+//             // e3 además late en Y (escala sinusoidal)
+//             e3->transform().scale = {1.2f, 1.2f + 0.4f * std::sin(t * 3.f), 1.2f};
+
+//             // ViewProjection común a todas las entidades
+//             float aspect = (float)win.width() / (float)win.height();
+//             glm::mat4 viewProj = cam.projection(aspect) * cam.view();
+
+//             // Un solo draw por entidad
+//             e1->render(viewProj);
+//             e2->render(viewProj);
+//             e3->render(viewProj);
+
+//             win.swapBuffers();
+//         }
+
+//         win.releaseCurrent();
+//     } catch (const std::exception& e) {
+//         std::fprintf(stderr, "exception: %s\n", e.what());
+//         return 1;
+//     }
+//     return 0;
+// }
+
 #include <glad/gl.h>
 #include <glad/glad_glx.h>
-#include <X11/Xlib.h>
 #include <X11/keysym.h>
 
+#include <Environment.hpp>
 #include <WWindow.hpp>
 #include <Shader.hpp>
 #include <Mesh.hpp>
+#include <Renderer.hpp>
 #include <Camera.hpp>
-#include <Transform.hpp>
 #include <Entity.hpp>
+#include <Transform.hpp>
 
 #include <glm.hpp>
-#include <type_ptr.hpp>
+#include <gtc/type_ptr.hpp>
 
 #include <cstdio>
-#include <cmath>
 #include <memory>
 #include <vector>
-#include <stdexcept>
-
-// ── Datos del cubo coloreado (24 vértices, 6 caras) ──────────────────
-static void uploadColoredCube(Mesh& m) {
-    std::vector<float> pos = {
-        -0.5f,-0.5f, 0.5f,   0.5f,-0.5f, 0.5f,   0.5f, 0.5f, 0.5f,  -0.5f, 0.5f, 0.5f,
-         0.5f,-0.5f,-0.5f,  -0.5f,-0.5f,-0.5f,  -0.5f, 0.5f,-0.5f,   0.5f, 0.5f,-0.5f,
-         0.5f,-0.5f, 0.5f,   0.5f,-0.5f,-0.5f,   0.5f, 0.5f,-0.5f,   0.5f, 0.5f, 0.5f,
-        -0.5f,-0.5f,-0.5f,  -0.5f,-0.5f, 0.5f,  -0.5f, 0.5f, 0.5f,  -0.5f, 0.5f,-0.5f,
-        -0.5f, 0.5f, 0.5f,   0.5f, 0.5f, 0.5f,   0.5f, 0.5f,-0.5f,  -0.5f, 0.5f,-0.5f,
-        -0.5f,-0.5f,-0.5f,   0.5f,-0.5f,-0.5f,   0.5f,-0.5f, 0.5f,  -0.5f,-0.5f, 0.5f,
-    };
-    std::vector<float> col;
-    auto pushColor = [&](float r, float g, float b) {
-        for (int i = 0; i < 4; ++i) { col.push_back(r); col.push_back(g); col.push_back(b); }
-    };
-    pushColor(1.0f, 0.2f, 0.2f);   // Front  rojo
-    pushColor(0.2f, 1.0f, 0.2f);   // Back   verde
-    pushColor(0.2f, 0.4f, 1.0f);   // Right  azul
-    pushColor(1.0f, 0.9f, 0.2f);   // Left   amarillo
-    pushColor(1.0f, 0.2f, 1.0f);   // Top    magenta
-    pushColor(0.2f, 1.0f, 1.0f);   // Bottom cian
-
-    std::vector<uint32_t> idx;
-    for (uint32_t f = 0; f < 6; ++f) {
-        uint32_t b = f * 4;
-        idx.insert(idx.end(), { b+0, b+1, b+2,  b+2, b+3, b+0 });
-    }
-    m.upload(pos, col, idx);
-}
 
 int main() {
     try {
-        // ─── Ventana ──────────────────────────────────────────────────
+        Environment env;
+
         WWindow::Config cfg;
-        cfg.title  = "Entity test — Esc to close";
+        cfg.title  = "Input + Renderer — WASD / mouse / scroll";
         cfg.width  = 900;
         cfg.height = 600;
+        env.addWindow(cfg);   // solo una ventana; usamos env por comodidad
 
-        WWindow win(cfg);
-        win.makeCurrent();
-        if (!gladLoadGL((GLADloadfunc)glXGetProcAddressARB)) {
-            std::fprintf(stderr, "gladLoadGL failed\n");
-            return 1;
-        }
-        std::printf("GL_VERSION: %s\n", (const char*)glGetString(GL_VERSION));
+        struct State {
+            Camera   cam;
+            Renderer renderer;
+            std::shared_ptr<Entity> cube;
+        } st;
 
-        // ─── Shader (uno solo, compartido por las 3 entidades) ────────
-        auto shader = std::make_shared<Shader>();
-		if (!shader->loadFromSource(
-			"#version 330 core\n"
-			"layout(location = 0) in vec3 aPos;\n"
-			"layout(location = 1) in vec3 aColor;\n"
-			"uniform mat4 uModel;\n"
-			"uniform mat4 uViewProj;\n"
-			"out vec3 vColor;\n"
-			"void main() {\n"
-			"    vColor = aColor;\n"
-			"    gl_Position = uViewProj * uModel * vec4(aPos, 1.0);\n"
-			"}\n",
-			"#version 330 core\n"
-			"in vec3 vColor;\n"
-			"out vec4 FragColor;\n"
-			"void main() { FragColor = vec4(vColor, 1.0); }\n"))
-		{
-			std::fprintf(stderr, "shader failed\n");
-			return 1;
-		}
+        std::shared_ptr<Shader> shader;
+        std::shared_ptr<Mesh>   cubeMesh;
 
-        // ─── Mesh (uno solo, compartido por las 3 entidades) ─────────
-        auto cubeMesh = std::make_shared<Mesh>();
-        uploadColoredCube(*cubeMesh);
+        env.setInit([&](WWindow& w) {
+            // ── Recursos (una vez) ─────────────────────────────────
+            shader = std::make_shared<Shader>();
+            shader->loadFromSource(
+                "#version 330 core\n"
+                "layout(location = 0) in vec3 aPos;\n"
+                "layout(location = 1) in vec3 aColor;\n"
+                "uniform mat4 uModel;\n"
+                "uniform mat4 uViewProj;\n"
+                "out vec3 vColor;\n"
+                "void main(){ vColor=aColor; gl_Position=uViewProj*uModel*vec4(aPos,1); }\n",
+                "#version 330 core\n"
+                "in vec3 vColor;\n"
+                "out vec4 FragColor;\n"
+                "void main(){ FragColor = vec4(vColor,1); }\n");
 
-        // ─── Tres entidades con transformaciones distintas ───────────
-        auto e1 = std::make_shared<Entity>(cubeMesh, shader);
-        e1->transform().position = {-2.f, 0.f, 0.f};   // izquierda
-        e1->transform().scale    = {0.8f, 0.8f, 0.8f};
+            cubeMesh = std::make_shared<Mesh>();
+            std::vector<float> pos = {
+                -0.5f,-0.5f, 0.5f,   0.5f,-0.5f, 0.5f,   0.5f, 0.5f, 0.5f,  -0.5f, 0.5f, 0.5f,
+                 0.5f,-0.5f,-0.5f,  -0.5f,-0.5f,-0.5f,  -0.5f, 0.5f,-0.5f,   0.5f, 0.5f,-0.5f,
+                 0.5f,-0.5f, 0.5f,   0.5f,-0.5f,-0.5f,   0.5f, 0.5f,-0.5f,   0.5f, 0.5f, 0.5f,
+                -0.5f,-0.5f,-0.5f,  -0.5f,-0.5f, 0.5f,  -0.5f, 0.5f, 0.5f,  -0.5f, 0.5f,-0.5f,
+                -0.5f, 0.5f, 0.5f,   0.5f, 0.5f, 0.5f,   0.5f, 0.5f,-0.5f,  -0.5f, 0.5f,-0.5f,
+                -0.5f,-0.5f,-0.5f,   0.5f,-0.5f,-0.5f,   0.5f,-0.5f, 0.5f,  -0.5f,-0.5f, 0.5f,
+            };
+            std::vector<float> col;
+            auto pushColor = [&](float r, float g, float b) {
+                for (int i = 0; i < 4; ++i) { col.push_back(r); col.push_back(g); col.push_back(b); }
+            };
+            pushColor(1,0.2f,0.2f); pushColor(0.2f,1,0.2f);
+            pushColor(0.2f,0.4f,1); pushColor(1,0.9f,0.2f);
+            pushColor(1,0.2f,1);    pushColor(0.2f,1,1);
+            std::vector<uint32_t> idx;
+            for (uint32_t f = 0; f < 6; ++f) {
+                uint32_t b = f * 4;
+                idx.insert(idx.end(), { b+0, b+1, b+2,  b+2, b+3, b+0 });
+            }
+            cubeMesh->upload(pos, col, idx);
 
-        auto e2 = std::make_shared<Entity>(cubeMesh, shader);
-        e2->transform().position = { 0.f, 0.f, 0.f};   // centro
-        // sin escala → 1,1,1
+            // ── Estado por ventana ──────────────────────────────────
+            st.cube = std::make_shared<Entity>(cubeMesh, shader);
+            st.cam  = Camera({4.f, 2.f, 4.f}, {0.f, 0.f, 0.f});
 
-        auto e3 = std::make_shared<Entity>(cubeMesh, shader);
-        e3->transform().position = { 2.f, 0.f, 0.f};   // derecha
-        e3->transform().scale    = {1.2f, 1.2f, 1.2f};
+            // Renderer: config inicial (aquí es donde cachea y aplica)
+            st.renderer.depthTest(true);
+            st.renderer.depthFunc(GL_LESS);
+            st.renderer.depthWrite(true);
+            st.renderer.cullFace(true);
+            st.renderer.cullMode(GL_BACK);
+            st.renderer.frontFace(GL_CCW);
+            st.renderer.blend(false);
 
-        // ─── Estado GL ───────────────────────────────────────────────
-        glEnable(GL_DEPTH_TEST);
-        glEnable(GL_CULL_FACE);
-        glCullFace(GL_BACK);
-        glFrontFace(GL_CCW);
+            (void)w;
+        });
 
-        // ─── Cámara ──────────────────────────────────────────────────
-        Camera cam({0.f, 2.f, 8.f}, {0.f, 0.f, 0.f});
+        env.setUpdate([&](WWindow& w, float dt) {
+            Input& in = w.input();
 
-        glViewport(0, 0, win.width(), win.height());
+            // ── Cámara: WASD mueve, rueda hace zoom ────────────────
+            float speed = 3.f * dt;
+            glm::vec3 fwd  = st.cam.forward();
+            glm::vec3 right = st.cam.right();
 
-        float t = 0.f;
+            glm::vec3 move{0.f};
+            if (in.isKeyDown(XK_w)) move += fwd;
+            if (in.isKeyDown(XK_s)) move -= fwd;
+            if (in.isKeyDown(XK_d)) move += right;
+            if (in.isKeyDown(XK_a)) move -= right;
+            if (glm::length(move) > 1e-6f)
+                st.cam.move(glm::normalize(move) * speed);
 
-        // ─── Bucle ───────────────────────────────────────────────────
-        while (!win.shouldClose()) {
-            if (!win.pollEvents()) break;
+            if (in.scrollDelta() != 0.f)
+                st.cam.orbit(0.f, 0.f, -in.scrollDelta() * 0.5f);
 
+            // ── Rotación del cubo con flechas ──────────────────────
+            float rotSpeed = 60.f * dt;
+            if (in.isKeyDown(XK_Left))  st.cube->transform().rotate( rotSpeed, {0,1,0});
+            if (in.isKeyDown(XK_Right)) st.cube->transform().rotate(-rotSpeed, {0,1,0});
+            if (in.isKeyDown(XK_Up))    st.cube->transform().rotate( rotSpeed, {1,0,0});
+            if (in.isKeyDown(XK_Down))  st.cube->transform().rotate(-rotSpeed, {1,0,0});
+
+            // ── Saltar con Space (flanco) ──────────────────────────
+            if (in.isKeyPressed(XK_space)) {
+                std::printf("Jump! (isKeyPressed XK_space)\n");
+            }
+        });
+
+        env.setRender([&](WWindow& w) {
             int rw, rh;
-            if (win.consumeResize(rw, rh))
-                glViewport(0, 0, rw, rh);
+            if (w.consumeResize(rw, rh))
+                st.renderer.setViewport(rw, rh);
+            else
+                st.renderer.setViewport(w.width(), w.height());
 
-            glClearColor(0.10f, 0.15f, 0.20f, 1.0f);
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            st.renderer.setClearColor(0.10f, 0.15f, 0.20f, 1.f);
+            st.renderer.clear(true, true, false);
 
-            t += 0.016f;
+            glm::mat4 vp = st.cam.projection(w.aspect()) * st.cam.view();
+            st.cube->render(vp);
+        });
 
-            // Cada entidad se transforma de forma independiente
-            e1->transform().rotate(45.f * 0.016f, {1.f, 0.f, 0.f});
-            e2->transform().rotate(60.f * 0.016f, {0.f, 1.f, 0.f});
-            e3->transform().rotate(45.f * 0.016f, {0.f, 0.f, 1.f});
-            // e3 además late en Y (escala sinusoidal)
-            e3->transform().scale = {1.2f, 1.2f + 0.4f * std::sin(t * 3.f), 1.2f};
-
-            // ViewProjection común a todas las entidades
-            float aspect = (float)win.width() / (float)win.height();
-            glm::mat4 viewProj = cam.projection(aspect) * cam.view();
-
-            // Un solo draw por entidad
-            e1->render(viewProj);
-            e2->render(viewProj);
-            e3->render(viewProj);
-
-            win.swapBuffers();
-        }
-
-        win.releaseCurrent();
+        env.run();
     } catch (const std::exception& e) {
         std::fprintf(stderr, "exception: %s\n", e.what());
         return 1;

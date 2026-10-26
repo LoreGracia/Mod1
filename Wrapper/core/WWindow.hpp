@@ -1,6 +1,6 @@
 #pragma once
 #include <X11/Xlib.h>
-#include "core/Input.hpp"
+#include <Input.hpp>
 #include <atomic>
 #include <string>
 #include <glad/glad_glx.h>
@@ -18,6 +18,7 @@ class WWindow
 		int			m_screen = 0;
 		int			m_width = 0, m_height = 0;
 		bool		m_needsResize = false;
+		Input		m_input;
 		std::atomic<bool> m_shouldClose{false};
 
 	public:
@@ -49,5 +50,8 @@ class WWindow
 		bool consumeResize(int& w, int &h);
 
 		Display *display() const { return m_display; }
-		int      screen()  const { return m_screen; }
+		int		screen()  const { return m_screen; }
+
+		Input &input()		{ return m_input; }
+		const Input &input() const	{ return m_input; }
 };

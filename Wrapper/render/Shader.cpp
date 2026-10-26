@@ -23,7 +23,7 @@ Shader::Shader(Shader&& o) noexcept
     : m_program(o.m_program), m_uniformCache(std::move(o.m_uniformCache))
 { o.m_program = 0; }
 
-Shader& Shader::operator=(Shader&& o) noexcept {
+Shader &Shader::operator=(Shader&& o) noexcept {
     if (this != &o) {
         if (m_program) glDeleteProgram(m_program);
         m_program = o.m_program;
@@ -83,20 +83,25 @@ bool Shader::loadFromSource(const std::string& v, const std::string& f) {
 }
 
 bool Shader::loadFromFile(const std::string& v, const std::string& f) {
-    try { return loadFromSource(readFile(v), readFile(f)); }
+    try {
+		return loadFromSource(readFile(v), readFile(f)); 
+	}
     catch (const std::exception& e) { std::cerr << e.what() << "\n"; return false; }
 }
 
 GLint Shader::location(const char* name) const {
     auto it = m_uniformCache.find(name);
-    if (it != m_uniformCache.end()) return it->second;
+
+    if (it != m_uniformCache.end())
+		return it->second;
     GLint loc = glGetUniformLocation(m_program, name);
+
     m_uniformCache.emplace(name, loc);
     return loc;
 }
 
 void Shader::setInt  (const char* n, int v)               const { glUniform1i(location(n), v); }
 void Shader::setFloat(const char* n, float v)             const { glUniform1f(location(n), v); }
-void Shader::setVec3 (const char* n, const glm::vec3& v)  const { glUniform3fv(location(n), 1, glm::value_ptr(v)); }
-void Shader::setVec4 (const char* n, const glm::vec4& v)  const { glUniform4fv(location(n), 1, glm::value_ptr(v)); }
-void Shader::setMat4 (const char* n, const glm::mat4& m)  const { glUniformMatrix4fv(location(n), 1, GL_FALSE, glm::value_ptr(m)); }
+void Shader::setVec3 (const char* n, const glm::vec3 &v)  const { glUniform3fv(location(n), 1, glm::value_ptr(v)); }
+void Shader::setVec4 (const char* n, const glm::vec4 &v)  const { glUniform4fv(location(n), 1, glm::value_ptr(v)); }
+void Shader::setMat4 (const char* n, const glm::mat4 &m)  const { glUniformMatrix4fv(location(n), 1, GL_FALSE, glm::value_ptr(m)); }

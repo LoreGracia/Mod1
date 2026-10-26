@@ -1,5 +1,6 @@
 #include <WWindow.hpp>
 #include <stdexcept>
+#include <X11/XKBlib.h>
 
 namespace
 {
@@ -22,6 +23,9 @@ namespace
 WWindow::WWindow(Config &conf)
 {
 	m_display = XOpenDisplay(nullptr);
+	Bool	supported = False;
+
+	XkbSetDetectableAutoRepeat(m_display, True, &supported);
 
 	if (!m_display)
 		throw std::runtime_error("XOpenDisplay faile");
@@ -141,9 +145,14 @@ void WWindow::swapBuffers() {
 }
 
 bool WWindow::pollEvents() {
+	m_input.beginFrame();
+
 	while (XPending(m_display)) {
 		XEvent ev;
+
 		XNextEvent(m_display, &ev);
+		m_input.handleEvent(ev);
+
 		switch (ev.type) {
 			case ClientMessage:
 				if ((Atom)ev.xclient.data.l[0] == m_wmDelete) {

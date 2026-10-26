@@ -127,9 +127,9 @@ SCENE_DIR = $(WRAPPER_DIR)/scene
 
 SOURCES := main.cpp
 GLSOURCES := $(GLDIR)/gl.c $(GLDIR)/glx.c
-WRAPSOURCES :=	$(CORE_DIR)/WWindow.cpp \
-				$(RENDER_DIR)/Shader.cpp $(RENDER_DIR)/Mesh.cpp \
-				$(SCENE_DIR)/Camera.cpp $(SCENE_DIR)/Transform.cpp $(SCENE_DIR)/Entity.cpp
+WRAPSOURCES :=	$(CORE_DIR)/WWindow.cpp $(CORE_DIR)/Environment.cpp $(CORE_DIR)/Input.cpp \
+				$(RENDER_DIR)/Shader.cpp $(RENDER_DIR)/Mesh.cpp $(RENDER_DIR)/Renderer.cpp \
+				$(SCENE_DIR)/Camera.cpp $(SCENE_DIR)/Transform.cpp $(SCENE_DIR)/Entity.cpp $(SCENE_DIR)/Scene.cpp
 
 INCLUDES := $(addprefix -I, ./inc)
 INCLUDES += $(addprefix -I, ./external/glm)
