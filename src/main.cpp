@@ -727,17 +727,38 @@ int main() {
             float speed = 3.f * dt;
             glm::vec3 fwd  = st.cam.forward();
             glm::vec3 right = st.cam.right();
+            glm::vec3 up = st.cam.up();
 
             glm::vec3 move{0.f};
-            if (in.isKeyDown(XK_w)) move += fwd;
-            if (in.isKeyDown(XK_s)) move -= fwd;
+			
+            if (in.isKeyDown(XK_Shift_L) && in.isKeyDown(XK_w)) move += fwd;
+            if (in.isKeyDown(XK_Shift_L) && in.isKeyDown(XK_s)) move -= fwd;
+            if (in.isKeyDown(XK_w)) move += up;
+            if (in.isKeyDown(XK_s)) move -= up;
             if (in.isKeyDown(XK_d)) move += right;
             if (in.isKeyDown(XK_a)) move -= right;
+
+			// if (in.isMouseButtonDown(Button3) && in.mouseDeltaY() != 0.f )
+			// 	st.cam.orbit(0.f, in.mouseDeltaY() * 0.5f, 0.f);
+	
+			if (in.isMouseButtonDown(Button3)) {
+				const float panSens = 0.02f;         // píxeles → unidades de mundo
+				glm::vec3 pan = right * (-in.mouseDeltaX() * panSens)
+							+ up    * ( in.mouseDeltaY() * panSens);
+				st.cam.move(pan);
+			}
+
             if (glm::length(move) > 1e-6f)
                 st.cam.move(glm::normalize(move) * speed);
 
             if (in.scrollDelta() != 0.f)
                 st.cam.orbit(0.f, 0.f, -in.scrollDelta() * 0.5f);
+            if (in.isMouseButtonDown(Button1))
+                st.cam.orbit(-in.mouseDeltaX() * 0.5f, 0.f, 0.f);
+            if (in.isMouseButtonDown(Button1))
+                st.cam.orbit(0.f, in.mouseDeltaY() * 0.5f, 0.f);
+
+
 
             // ── Rotación del cubo con flechas ──────────────────────
             float rotSpeed = 60.f * dt;

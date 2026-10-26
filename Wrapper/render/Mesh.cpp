@@ -52,6 +52,7 @@ void Mesh::upload(const std::vector<float>& v,
 	glBindVertexArray(0);
 }
 
+#include <iostream>
 void Mesh::upload(const std::vector<float>& positions,
 				const std::vector<float>& colors,
 				const std::vector<uint32_t>& indices,
