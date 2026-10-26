@@ -18,16 +18,22 @@ ERROR = $(LIGTH)$(RED)[ERROR]$(END)
 COMPOSE   := docker compose
 LINT_DIRS := src inc Wrapper
 
-.PHONY: lint lint-build lint-shell lint-clean
+.PHONY: lint lint-fix lint-summary lint-build lint-shell lint-clean
 
 lint-build:
-	$(COMPOSE) build lint
+	@$(COMPOSE) build lint
 
 lint: lint-build
-	@$(COMPOSE) run --rm -e LINT_DIRS="$(LINT_DIRS)" lint
+	@$(COMPOSE) run --rm lint
+
+lint-fix: lint-build
+	@$(COMPOSE) run --rm lint-fix
+
+lint-summary: lint-build
+	@$(COMPOSE) run --rm -e MODE=summary lint
 
 lint-shell: lint-build
-	$(COMPOSE) run --rm lint bash
+	@$(COMPOSE) run --rm lint bash
 
 lint-clean:
-	$(COMPOSE) down --rmi local
+	@$(COMPOSE) down --rmi local

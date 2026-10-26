@@ -155,9 +155,20 @@ WRAPOBJS = $(addprefix $(OBJ_DIR)/, $(WRAPSOURCES:.cpp=.o))
 WRAPDEP = $(addprefix $(DEP_DIR)/, $(WRAPSOURCES:.cpp=.d))
 
 ################################################################################
+#                               CODE STYLE (DOCKER)                            #
+################################################################################
+
+COMPOSE_FILE  := test/codeStyle/docker-compose.yml
+COMPOSE_CMD   := docker compose -f $(COMPOSE_FILE)
+LINT_DIRS     ?= src inc Wrapper
+LINT_SERVICE  := lint
+LINT_FIX_SVC  := lint-fix
+
+################################################################################
 #                               PHONY TARGETS                                  #
 ################################################################################
-.PHONY: help clean fclean re
+.PHONY: help clean fclean re \
+        lint lint-build lint-fix lint-summary lint-shell lint-clean
 
 ################################################################################
 #                               DEFAULT TARGET                                 #
@@ -311,6 +322,28 @@ $(NAME): $(OBJS) $(GLOBJS) $(WRAPOBJS)
 		printf "$(ERROR) when generated $(NAME)"; \
 		exit 1; \
 	fi
+
+################################################################################
+#                               CODE STYLE TARGETS                             #
+################################################################################
+
+lint-build: ## Build the clang-format / clang-tidy Docker image
+	@$(COMPOSE_CMD) build $(LINT_SERVICE)
+
+lint: lint-build ## Run clang-format and clang-tidy (read-only, detailed diff)
+	@$(COMPOSE_CMD) run --rm -e LINT_DIRS="$(LINT_DIRS)" $(LINT_SERVICE)
+
+lint-summary: lint-build ## Run linter in summary mode (counters only)
+	@$(COMPOSE_CMD) run --rm -e LINT_DIRS="$(LINT_DIRS)" -e MODE=summary $(LINT_SERVICE)
+
+lint-fix: lint-build ## Apply clang-format -i to all files (modifies sources)
+	@$(COMPOSE_CMD) run --rm -e LINT_DIRS="$(LINT_DIRS)" -e MODE=fix $(LINT_FIX_SVC)
+
+lint-shell: lint-build ## Open an interactive shell inside the linter container
+	@$(COMPOSE_CMD) run --rm $(LINT_SERVICE) bash
+
+lint-clean: ## Remove the linter Docker image and containers
+	@$(COMPOSE_CMD) down --rmi local
 
 ################################################################################
 #                               CLEANUP TARGETS                                #
