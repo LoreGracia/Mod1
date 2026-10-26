@@ -1,0 +1,11 @@
+services:
+  lint:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ../../:/src:ro
+    working_dir: /src
+    environment:
+      - LINT_DIRS=${LINT_DIRS:-src inc Wrapper test}
+    command: ["/opt/lint/run-lint.sh"]
