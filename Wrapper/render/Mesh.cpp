@@ -108,12 +108,7 @@ void Mesh::draw() const {
 
 Mesh Mesh::triangle() {
 	Mesh m;
-	m.upload({-0.5f,-0.5f,0.f,  0.5f,-0.5f,0.f,  0.f,0.5f,0.f}, {0,1,2});
-	return m;
-}
 
-Mesh Mesh::cube() {
-	Mesh m;
 	m.upload({
 		-0.5f,-0.5f,-0.5f,  0.5f,-0.5f,-0.5f,  0.5f,0.5f,-0.5f,  -0.5f,0.5f,-0.5f,
 		-0.5f,-0.5f, 0.5f,  0.5f,-0.5f, 0.5f,  0.5f,0.5f, 0.5f,  -0.5f,0.5f, 0.5f

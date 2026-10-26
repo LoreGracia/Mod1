@@ -476,87 +476,116 @@
 #include <Shader.hpp>
 #include <Mesh.hpp>
 #include <Camera.hpp>
+#include <Transform.hpp>
+#include <Entity.hpp>
 
 #include <glm.hpp>
-#include <gtc/matrix_transform.hpp>
-#include <gtc/type_ptr.hpp>
+#include <type_ptr.hpp>
 
 #include <cstdio>
+#include <cmath>
+#include <memory>
 #include <vector>
 #include <stdexcept>
 
+// ── Datos del cubo coloreado (24 vértices, 6 caras) ──────────────────
+static void uploadColoredCube(Mesh& m) {
+    std::vector<float> pos = {
+        -0.5f,-0.5f, 0.5f,   0.5f,-0.5f, 0.5f,   0.5f, 0.5f, 0.5f,  -0.5f, 0.5f, 0.5f,
+         0.5f,-0.5f,-0.5f,  -0.5f,-0.5f,-0.5f,  -0.5f, 0.5f,-0.5f,   0.5f, 0.5f,-0.5f,
+         0.5f,-0.5f, 0.5f,   0.5f,-0.5f,-0.5f,   0.5f, 0.5f,-0.5f,   0.5f, 0.5f, 0.5f,
+        -0.5f,-0.5f,-0.5f,  -0.5f,-0.5f, 0.5f,  -0.5f, 0.5f, 0.5f,  -0.5f, 0.5f,-0.5f,
+        -0.5f, 0.5f, 0.5f,   0.5f, 0.5f, 0.5f,   0.5f, 0.5f,-0.5f,  -0.5f, 0.5f,-0.5f,
+        -0.5f,-0.5f,-0.5f,   0.5f,-0.5f,-0.5f,   0.5f,-0.5f, 0.5f,  -0.5f,-0.5f, 0.5f,
+    };
+    std::vector<float> col;
+    auto pushColor = [&](float r, float g, float b) {
+        for (int i = 0; i < 4; ++i) { col.push_back(r); col.push_back(g); col.push_back(b); }
+    };
+    pushColor(1.0f, 0.2f, 0.2f);   // Front  rojo
+    pushColor(0.2f, 1.0f, 0.2f);   // Back   verde
+    pushColor(0.2f, 0.4f, 1.0f);   // Right  azul
+    pushColor(1.0f, 0.9f, 0.2f);   // Left   amarillo
+    pushColor(1.0f, 0.2f, 1.0f);   // Top    magenta
+    pushColor(0.2f, 1.0f, 1.0f);   // Bottom cian
+
+    std::vector<uint32_t> idx;
+    for (uint32_t f = 0; f < 6; ++f) {
+        uint32_t b = f * 4;
+        idx.insert(idx.end(), { b+0, b+1, b+2,  b+2, b+3, b+0 });
+    }
+    m.upload(pos, col, idx);
+}
+
 int main() {
     try {
+        // ─── Ventana ──────────────────────────────────────────────────
         WWindow::Config cfg;
-        cfg.title  = "Camera + Cube — Esc to close";
-        cfg.width  = 800;
+        cfg.title  = "Entity test — Esc to close";
+        cfg.width  = 900;
         cfg.height = 600;
 
         WWindow win(cfg);
         win.makeCurrent();
-        if (!gladLoadGL((GLADloadfunc)glXGetProcAddressARB)) return 1;
+        if (!gladLoadGL((GLADloadfunc)glXGetProcAddressARB)) {
+            std::fprintf(stderr, "gladLoadGL failed\n");
+            return 1;
+        }
         std::printf("GL_VERSION: %s\n", (const char*)glGetString(GL_VERSION));
 
-        // ─── Shader ────────────────────────────────────────────────
-        Shader shader;
-        if (!shader.loadFromSource(
-            "#version 330 core\n"
-            "layout(location = 0) in vec3 aPos;\n"
-            "layout(location = 1) in vec3 aColor;\n"
-            "uniform mat4 uMVP;\n"
-            "out vec3 vColor;\n"
-            "void main() {\n"
-            "    vColor = aColor;\n"
-            "    gl_Position = uMVP * vec4(aPos, 1.0);\n"
-            "}\n",
-            "#version 330 core\n"
-            "in vec3 vColor;\n"
-            "out vec4 FragColor;\n"
-            "void main() { FragColor = vec4(vColor, 1.0); }\n"))
-        { std::fprintf(stderr, "shader failed\n"); return 1; }
+        // ─── Shader (uno solo, compartido por las 3 entidades) ────────
+        auto shader = std::make_shared<Shader>();
+		if (!shader->loadFromSource(
+			"#version 330 core\n"
+			"layout(location = 0) in vec3 aPos;\n"
+			"layout(location = 1) in vec3 aColor;\n"
+			"uniform mat4 uModel;\n"
+			"uniform mat4 uViewProj;\n"
+			"out vec3 vColor;\n"
+			"void main() {\n"
+			"    vColor = aColor;\n"
+			"    gl_Position = uViewProj * uModel * vec4(aPos, 1.0);\n"
+			"}\n",
+			"#version 330 core\n"
+			"in vec3 vColor;\n"
+			"out vec4 FragColor;\n"
+			"void main() { FragColor = vec4(vColor, 1.0); }\n"))
+		{
+			std::fprintf(stderr, "shader failed\n");
+			return 1;
+		}
 
-        // ─── Cubo coloreado (24 vértices, 6 caras) ─────────────────
-        std::vector<float> pos = {
-            -0.5f,-0.5f, 0.5f,   0.5f,-0.5f, 0.5f,   0.5f, 0.5f, 0.5f,  -0.5f, 0.5f, 0.5f,
-             0.5f,-0.5f,-0.5f,  -0.5f,-0.5f,-0.5f,  -0.5f, 0.5f,-0.5f,   0.5f, 0.5f,-0.5f,
-             0.5f,-0.5f, 0.5f,   0.5f,-0.5f,-0.5f,   0.5f, 0.5f,-0.5f,   0.5f, 0.5f, 0.5f,
-            -0.5f,-0.5f,-0.5f,  -0.5f,-0.5f, 0.5f,  -0.5f, 0.5f, 0.5f,  -0.5f, 0.5f,-0.5f,
-            -0.5f, 0.5f, 0.5f,   0.5f, 0.5f, 0.5f,   0.5f, 0.5f,-0.5f,  -0.5f, 0.5f,-0.5f,
-            -0.5f,-0.5f,-0.5f,   0.5f,-0.5f,-0.5f,   0.5f,-0.5f, 0.5f,  -0.5f,-0.5f, 0.5f,
-        };
-        std::vector<float> col;
-        auto pushColor = [&](float r, float g, float b) {
-            for (int i = 0; i < 4; ++i) { col.push_back(r); col.push_back(g); col.push_back(b); }
-        };
-        pushColor(1.0f, 0.2f, 0.2f);   // Front  rojo
-        pushColor(0.2f, 1.0f, 0.2f);   // Back   verde
-        pushColor(0.2f, 0.4f, 1.0f);   // Right  azul
-        pushColor(1.0f, 0.9f, 0.2f);   // Left   amarillo
-        pushColor(1.0f, 0.2f, 1.0f);   // Top    magenta
-        pushColor(0.2f, 1.0f, 1.0f);   // Bottom cian
+        // ─── Mesh (uno solo, compartido por las 3 entidades) ─────────
+        auto cubeMesh = std::make_shared<Mesh>();
+        uploadColoredCube(*cubeMesh);
 
-        std::vector<uint32_t> idx;
-        for (uint32_t f = 0; f < 6; ++f) {
-            uint32_t b = f * 4;
-            idx.insert(idx.end(), { b+0, b+1, b+2,  b+2, b+3, b+0 });
-        }
+        // ─── Tres entidades con transformaciones distintas ───────────
+        auto e1 = std::make_shared<Entity>(cubeMesh, shader);
+        e1->transform().position = {-2.f, 0.f, 0.f};   // izquierda
+        e1->transform().scale    = {0.8f, 0.8f, 0.8f};
 
-        Mesh cub;
-        cub.upload(pos, col, idx);
+        auto e2 = std::make_shared<Entity>(cubeMesh, shader);
+        e2->transform().position = { 0.f, 0.f, 0.f};   // centro
+        // sin escala → 1,1,1
 
-        // ─── Estado GL ─────────────────────────────────────────────
+        auto e3 = std::make_shared<Entity>(cubeMesh, shader);
+        e3->transform().position = { 2.f, 0.f, 0.f};   // derecha
+        e3->transform().scale    = {1.2f, 1.2f, 1.2f};
+
+        // ─── Estado GL ───────────────────────────────────────────────
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_CULL_FACE);
         glCullFace(GL_BACK);
         glFrontFace(GL_CCW);
 
-        // ─── Cámara: 4.69 unidades del origen, mirando al cubo ─────
-        Camera cam({3.f, 2.f, 3.f}, {0.f, 0.f, 0.f});
+        // ─── Cámara ──────────────────────────────────────────────────
+        Camera cam({0.f, 2.f, 8.f}, {0.f, 0.f, 0.f});
 
         glViewport(0, 0, win.width(), win.height());
 
-        float angleX = 0.f, angleY = 0.f;
+        float t = 0.f;
 
+        // ─── Bucle ───────────────────────────────────────────────────
         while (!win.shouldClose()) {
             if (!win.pollEvents()) break;
 
@@ -567,27 +596,23 @@ int main() {
             glClearColor(0.10f, 0.15f, 0.20f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-            // ── Model: el cubo gira sobre sí mismo ────────────────
-            angleX += 0.5f;
-            angleY += 1.0f;
-            if (angleX > 360.f) angleX -= 360.f;
-            if (angleY > 360.f) angleY -= 360.f;
+            t += 0.016f;
 
-            glm::mat4 model = glm::mat4(1.f);
-            // model = glm::rotate(model, glm::radians(angleX), glm::vec3(1, 0, 0));
-            // model = glm::rotate(model, glm::radians(angleY), glm::vec3(0, 1, 0));
+            // Cada entidad se transforma de forma independiente
+            e1->transform().rotate(45.f * 0.016f, {1.f, 0.f, 0.f});
+            e2->transform().rotate(60.f * 0.016f, {0.f, 1.f, 0.f});
+            e3->transform().rotate(45.f * 0.016f, {0.f, 0.f, 1.f});
+            // e3 además late en Y (escala sinusoidal)
+            e3->transform().scale = {1.2f, 1.2f + 0.4f * std::sin(t * 3.f), 1.2f};
 
-            // ── View + Projection: la cámara orbita el cubo ───────
-            // cam.orbit(0.4f, 0.f, 0.f);   // yaw solamente: círculo plano
-
+            // ViewProjection común a todas las entidades
             float aspect = (float)win.width() / (float)win.height();
-            glm::mat4 vp  = cam.projection(aspect) * cam.view();
-            glm::mat4 mvp = vp * model;
+            glm::mat4 viewProj = cam.projection(aspect) * cam.view();
 
-            // ── Draw ──────────────────────────────────────────────
-            shader.use();
-            shader.setMat4("uMVP", glm::value_ptr(mvp));   // ← ver nota abajo
-            cub.draw();
+            // Un solo draw por entidad
+            e1->render(viewProj);
+            e2->render(viewProj);
+            e3->render(viewProj);
 
             win.swapBuffers();
         }

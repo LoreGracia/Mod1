@@ -129,7 +129,7 @@ SOURCES := main.cpp
 GLSOURCES := $(GLDIR)/gl.c $(GLDIR)/glx.c
 WRAPSOURCES :=	$(CORE_DIR)/WWindow.cpp \
 				$(RENDER_DIR)/Shader.cpp $(RENDER_DIR)/Mesh.cpp \
-				$(SCENE_DIR)/Camera.cpp
+				$(SCENE_DIR)/Camera.cpp $(SCENE_DIR)/Transform.cpp $(SCENE_DIR)/Entity.cpp
 
 INCLUDES := $(addprefix -I, ./inc)
 INCLUDES += $(addprefix -I, ./external/glm)
