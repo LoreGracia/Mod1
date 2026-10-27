@@ -1,22 +1,23 @@
-name: GitHub Actions Demo
+name: Code Style
+
 on:
   push:
-    branches: [ "main" ]
+    branches: [main]
   pull_request:
-    branches: [ "main" ]
+    branches: [main]
+
 jobs:
-  Explore-GitHub-Actions:
+  code-style:
+    name: clang-format + clang-tidy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - run: echo "🎉 The job was automatically triggered by a ${{ github.event_name }} event."
-      - run: curl -fLO https://github.com/cpp-linter/clang-tools-static-binaries/releases/latest/download/clang-format-21_linux-amd64
-      - run: wget -qO /usr/local/bin/clang-tidy https://github.com/cpp-linter/clang-tools-static-binaries/releases/latest/download/clang-tidy-20_linux-amd64
-      - run: curl -fLO https://github.com/cpp-linter/clang-tools-static-binaries/releases/latest/download/SHA512SUMS
-      - run: sha512sum -c SHA512SUMS --ignore-missing
-      - run: chmod +x clang-format-21_linux-amd64
-      - run: chmod a+x /usr/local/bin/clang-tidy
-      - run: ./clang-format-21_linux-amd64 --version
-      - run: clang-tidy --version
-      # - run: clang-format --dry-run --Werror B.cpp
-      # - run: clang-tidy B.cpp -- -std=c++20 -I/usr/lib/gcc/x86_64-linux-gnu/13/include
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build linter image
+        run: make lint-build
+
+      - name: Run linter
+        run: make lint-summary
