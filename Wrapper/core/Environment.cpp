@@ -1,9 +1,8 @@
 #include "core/Environment.hpp"
-
 #include <glad/gl.h>
 #include <glad/glad_glx.h>
-#include <X11/Xlib.h>
 
+#include <X11/Xlib.h>
 #include <cstdio>
 #include <stdexcept>
 
@@ -11,10 +10,11 @@ Environment::~Environment()
 {
 	stop();
 	for (auto& t : m_threads)
-		if (t.joinable()) t.join();
+		if (t.joinable())
+			t.join();
 }
 
-WWindow& Environment::addWindow(WWindow::Config &cfg)
+WWindow& Environment::addWindow(WWindow::Config& cfg)
 {
 	if (m_running.load())
 		throw std::runtime_error("addWindow() after run()");
@@ -28,7 +28,7 @@ void Environment::run()
 	if (m_windows.empty())
 		return;
 
-	WWindow &first = *m_windows.front();
+	WWindow& first = *m_windows.front();
 
 	first.makeCurrent();
 	if (!gladLoadGL((GLADloadfunc)glXGetProcAddressARB)) {
@@ -61,14 +61,17 @@ void Environment::windowThread(WWindow* win)
 	auto last = std::chrono::steady_clock::now();
 
 	while (m_running.load() && !win->shouldClose()) {
-		if (!win->pollEvents()) break;
+		if (!win->pollEvents())
+			break;
 
-		auto now = std::chrono::steady_clock::now();
-		float dt = std::chrono::duration<float>(now - last).count();
-		last = now;
+		auto  now = std::chrono::steady_clock::now();
+		float dt  = std::chrono::duration<float>(now - last).count();
+		last	  = now;
 
-		if (m_update) m_update(*win, dt);
-		if (m_render) m_render(*win);
+		if (m_update)
+			m_update(*win, dt);
+		if (m_render)
+			m_render(*win);
 
 		win->swapBuffers();
 	}

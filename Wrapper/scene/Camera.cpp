@@ -1,18 +1,18 @@
 // src/scene/Camera.cpp
 #include <Camera.hpp>
-#include <gtc/matrix_transform.hpp>
 #include <cmath>
+#include <gtc/matrix_transform.hpp>
 
 Camera::Camera(const glm::vec3& pos, const glm::vec3& target, const glm::vec3& up)
 	: m_position(pos), m_target(target), m_worldUp(up)
 {
 	glm::vec3 d = pos - target;
-	m_distance = glm::length(d);
+	m_distance	= glm::length(d);
 	if (m_distance > 1e-6f) {
 		glm::vec3 n = d / m_distance;
 
 		m_pitch = glm::degrees(std::asin(glm::clamp(n.y, -1.f, 1.f)));
-		m_yaw   = glm::degrees(std::atan2(n.x, n.z));
+		m_yaw	= glm::degrees(std::atan2(n.x, n.z));
 	}
 }
 
@@ -39,18 +39,15 @@ void Camera::lookAt(const glm::vec3& target)
 
 void Camera::orbit(float dYaw, float dPitch, float dDist)
 {
-	m_yaw   += dYaw;
+	m_yaw += dYaw;
 	m_pitch += dPitch;
-	m_pitch = glm::clamp(m_pitch, -89.f, 89.f);
+	m_pitch	   = glm::clamp(m_pitch, -89.f, 89.f);
 	m_distance = glm::max(0.1f, m_distance + dDist);
 
-	float ry = glm::radians(m_yaw);
-	float rp = glm::radians(m_pitch);
-	glm::vec3 offset{
-		m_distance * std::cos(rp) * std::sin(ry),
-		m_distance * std::sin(rp),
-		m_distance * std::cos(rp) * std::cos(ry)
-	};
+	float	  ry = glm::radians(m_yaw);
+	float	  rp = glm::radians(m_pitch);
+	glm::vec3 offset{m_distance * std::cos(rp) * std::sin(ry), m_distance * std::sin(rp),
+					 m_distance * std::cos(rp) * std::cos(ry)};
 	m_position = m_target + offset;
 }
 

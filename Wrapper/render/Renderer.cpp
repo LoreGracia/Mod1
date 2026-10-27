@@ -4,17 +4,20 @@ void Renderer::setViewport(int w, int h)
 {
 	if (w == m_vpW && h == m_vpH)
 		return;
-	m_vpW = w; m_vpH = h;
+	m_vpW = w;
+	m_vpH = h;
 
 	glViewport(0, 0, w, h);
 }
 
 void Renderer::setClearColor(float r, float g, float b, float a)
 {
-	if (m_clearColorKnown &&
-		r == m_clearR && g == m_clearG && b == m_clearB && a == m_clearA)
+	if (m_clearColorKnown && r == m_clearR && g == m_clearG && b == m_clearB && a == m_clearA)
 		return;
-	m_clearR = r; m_clearG = g; m_clearB = b; m_clearA = a;
+	m_clearR		  = r;
+	m_clearG		  = g;
+	m_clearB		  = b;
+	m_clearA		  = a;
 	m_clearColorKnown = true;
 
 	glClearColor(r, g, b, a);
@@ -100,22 +103,23 @@ void Renderer::blendFunc(GLenum src, GLenum dst)
 {
 	if (src == m_blendSrc && dst == m_blendDst)
 		return;
-	m_blendSrc = src; m_blendDst = dst;
+	m_blendSrc = src;
+	m_blendDst = dst;
 
 	glBlendFunc(src, dst);
 }
 
 void Renderer::syncToDefaults()
 {
-	m_vpW = m_vpH = -1;
+	m_vpW = m_vpH	  = -1;
 	m_clearColorKnown = false;
-	m_depthTest  = !m_depthTest;
+	m_depthTest		  = !m_depthTest;
 
 	depthTest(!m_depthTest);
-	m_cullFace   = !m_cullFace;
+	m_cullFace = !m_cullFace;
 
 	cullFace(!m_cullFace);
-	m_blend      = !m_blend;
+	m_blend = !m_blend;
 
 	blend(!m_blend);
 }

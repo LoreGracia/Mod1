@@ -4,7 +4,7 @@ set -uo pipefail
 read -ra LINT_DIRS <<< "${LINT_DIRS:-src inc Wrapper}"
 MODE="${MODE:-check}"      # check | fix | summary
 
-# ── Colores ─────────────────────────────────────────────────────────
+# ── Colors ─────────────────────────────────────────────────────────
 if [ -t 1 ] || [ "${FORCE_COLOR:-0}" = "1" ]; then
 	RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'
 	CYAN=$'\033[36m'; BOLD=$'\033[1m'; DIM=$'\033[2m'; RESET=$'\033[m'
@@ -12,7 +12,7 @@ else
 	RED=; GREEN=; YELLOW=; CYAN=; BOLD=; DIM=; RESET=
 fi
 
-# ── Recoger archivos ────────────────────────────────────────────────
+# ── Get files ────────────────────────────────────────────────
 declare -a files=()
 declare -A count_by_dir=()
 
@@ -43,7 +43,7 @@ done
 printf "  ${BOLD}%-12s %3d archivos${RESET}\n" "Total" "${#files[@]}"
 echo
 
-# ── Modo fix: aplicar clang-format -i y salir ───────────────────────
+# ── Mode fix: apply clang-format -i and exit ───────────────────────
 if [ "$MODE" = "fix" ]; then
 	echo "${BOLD}=== Modo fix: aplicando clang-format -i ===${RESET}"
 	changed=0
@@ -66,7 +66,7 @@ if [ "$MODE" = "fix" ]; then
 	exit 0
 fi
 
-# ── clang-format: recopilar fallos ──────────────────────────────────
+# ── clang-format: get failures ──────────────────────────────────
 fmt_fail_files=()
 for f in "${files[@]}"; do
 	if ! clang-format --dry-run --Werror "$f" >/dev/null 2>&1; then
@@ -74,7 +74,7 @@ for f in "${files[@]}"; do
 	fi
 done
 
-# ── clang-tidy: recopilar fallos ────────────────────────────────────
+# ── clang-tidy: get failures ────────────────────────────────────
 if [ -f /src/compile_commands.json ]; then
 	TIDY_DB="-p /src"
 else
@@ -91,7 +91,7 @@ for f in "${files[@]}"; do
 	fi
 done
 
-# ── Modo summary: solo contadores ───────────────────────────────────
+# ── Mode summary: only file counters ───────────────────────────────────
 if [ "$MODE" = "summary" ]; then
 	echo "${BOLD}=== Resumen ===${RESET}"
 	printf "  %-30s %s\n" "Archivos analizados:" "${#files[@]}"
@@ -104,7 +104,7 @@ if [ "$MODE" = "summary" ]; then
 	exit 1
 fi
 
-# ── Modo check: detalle por archivo ─────────────────────────────────
+# ── Mode check: logs of each file ─────────────────────────────────
 echo "${BOLD}=== clang-format (estilo) ===${RESET}"
 if [ ${#fmt_fail_files[@]} -eq 0 ]; then
 	echo "${GREEN}✅ Todos los archivos cumplen el formato${RESET}"
@@ -147,7 +147,7 @@ else
 fi
 echo
 
-# ── Resumen final ───────────────────────────────────────────────────
+# ── Final summary ───────────────────────────────────────────────────
 echo "${BOLD}=== Resumen ===${RESET}"
 printf "  %-28s %s\n" "Archivos:" "${#files[@]}"
 printf "  %-28s %s\n" "Formato (clang-format):" "${#fmt_fail_files[@]}"
