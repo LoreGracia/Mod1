@@ -2,9 +2,9 @@ name: Code Style
 
 on:
   push:
-    branches: [main, 4-piline]
+    branches: [main, 4-pipeline]
   pull_request:
-    branches: [main, 4-piline]
+    branches: [main, 4-pipeline]
 
 jobs:
   code-style:
