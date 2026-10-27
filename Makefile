@@ -43,7 +43,7 @@ endif
 ifeq ($(PLATFORM),LINUX)
 	CXX      := g++
 	LDLIBS   := -lGL -lX11 -lpthread -ldl
-	CXXFLAGS += -DPLATFORM_LINUX -Wall -Werror -Wextra -g -pedantic #-fsanitize=address
+	CXXFLAGS += -DPLATFORM_LINUX -Wall -Werror -Wextra -g -pedantic -fsanitize=address
 else ifeq ($(PLATFORM),WINDOWS_MSYS)
 	CXX      := g++
 	LDLIBS   := -lopengl32 -lgdi32
@@ -96,7 +96,7 @@ TOOLCHAIN_PROBE_SRC := int main(void){return 0;}
 #                               BUILD VARIABLES                                #
 ################################################################################
 
-NAME = MOD1
+NAME = mod1
 RMV = rm -rf
 CLEAR = $(OBJ_DIR) $(DEP_DIR)
 
@@ -106,15 +106,69 @@ TEST_DIR = tests
 OBJ_DIR = .obj
 DEP_DIR = .dep
 
+SUB_DIR_OBJ =	$(OBJ_DIR)/$(EXTER_DIR) $(OBJ_DIR)/$(GLDIR) \
+				$(OBJ_DIR)/$(WRAPPER_DIR) $(OBJ_DIR)/$(CORE_DIR) \
+				$(OBJ_DIR)/$(MATH_DIR) $(OBJ_DIR)/$(RENDER_DIR) \
+				$(OBJ_DIR)/$(SCENE_DIR)
+
+SUB_DIR_DEP =	$(DEP_DIR)/$(EXTER_DIR) $(DEP_DIR)/$(GLDIR) \
+				$(DEP_DIR)/$(WRAPPER_DIR) $(DEP_DIR)/$(CORE_DIR) \
+				$(DEP_DIR)/$(MATH_DIR) $(DEP_DIR)/$(RENDER_DIR) \
+				$(DEP_DIR)/$(SCENE_DIR)
+
+EXTER_DIR = external
+GLDIR = $(EXTER_DIR)/glad/src
+
+WRAPPER_DIR = Wrapper
+CORE_DIR = $(WRAPPER_DIR)/core
+MATH_DIR = $(WRAPPER_DIR)/math
+RENDER_DIR = $(WRAPPER_DIR)/render
+SCENE_DIR = $(WRAPPER_DIR)/scene
+
 SOURCES := main.cpp
+GLSOURCES := $(GLDIR)/gl.c $(GLDIR)/glx.c
+WRAPSOURCES :=	$(CORE_DIR)/WWindow.cpp $(CORE_DIR)/Environment.cpp $(CORE_DIR)/Input.cpp \
+				$(RENDER_DIR)/Shader.cpp $(RENDER_DIR)/Mesh.cpp $(RENDER_DIR)/Renderer.cpp \
+				$(SCENE_DIR)/Camera.cpp $(SCENE_DIR)/Transform.cpp $(SCENE_DIR)/Entity.cpp $(SCENE_DIR)/Scene.cpp
+
 INCLUDES := $(addprefix -I, ./inc)
+INCLUDES += $(addprefix -I, ./external/glm)
+INCLUDES += $(addprefix -I, ./external/glm/detail)
+INCLUDES += $(addprefix -I, ./external/glm/ext)
+INCLUDES += $(addprefix -I, ./external/glm/gtc)
+INCLUDES += $(addprefix -I, ./external/glm/gtx)
+INCLUDES += $(addprefix -I, ./external/glm/simd)
+INCLUDES += $(addprefix -I, ./external/glad/include/)
+INCLUDES += $(addprefix -I, ./Wrapper)
+INCLUDES += $(addprefix -I, ./Wrapper/core)
+INCLUDES += $(addprefix -I, ./Wrapper/math)
+INCLUDES += $(addprefix -I, ./Wrapper/render)
+INCLUDES += $(addprefix -I, ./Wrapper/scene)
+
 OBJS =  $(addprefix $(OBJ_DIR)/, $(SOURCES:.cpp=.o))
 DEPS = $(addprefix $(DEP_DIR)/, $(SOURCES:.cpp=.d))
+
+GLOBJS = $(addprefix $(OBJ_DIR)/, $(GLSOURCES:.c=.o))
+GLDEP = $(addprefix $(OBJ_DIR)/, $(GLSOURCES:.c=.d))
+
+WRAPOBJS = $(addprefix $(OBJ_DIR)/, $(WRAPSOURCES:.cpp=.o))
+WRAPDEP = $(addprefix $(DEP_DIR)/, $(WRAPSOURCES:.cpp=.d))
+
+################################################################################
+#                               CODE STYLE (DOCKER)                            #
+################################################################################
+
+COMPOSE_FILE  := test/codeStyle/docker-compose.yml
+COMPOSE_CMD   := docker compose -f $(COMPOSE_FILE)
+LINT_DIRS     ?= src inc Wrapper
+LINT_SERVICE  := lint
+LINT_FIX_SVC  := lint-fix
 
 ################################################################################
 #                               PHONY TARGETS                                  #
 ################################################################################
-.PHONY: help clean fclean re
+.PHONY: help clean fclean re \
+        lint lint-build lint-fix lint-summary lint-shell lint-clean
 
 ################################################################################
 #                               DEFAULT TARGET                                 #
@@ -207,32 +261,89 @@ check_requirements: ## Verify that the system has everything needed to build
 #                               DIRECTORY CREATION                             #
 ################################################################################
 
+define create_dirs
+	@for dir in $(1); do \
+		if [ -d "$$dir" ]; then \
+			printf " -- The directory already exists: %s\n" "$$dir"; \
+		else \
+			mkdir -p "$$dir" && printf " -- Created directory: %s\n" "$$dir"; \
+		fi; \
+	done
+endef
+
 $(OBJ_DIR):
-	@mkdir -p $(OBJ_DIR)
-	@$(foreach dir, $(OBJ_DIR), mkdir -p $(dir);)
-	@$(foreach dir, $(DEP_DIR), mkdir -p $(dir);)
-	@printf "$(INFO) Created test object directory structure\n"
+	$(call create_dirs, $(OBJ_DIR) $(SUB_DIR_OBJ))
+	@printf "$(INFO) Created object directory structure\n"
+
+$(DEP_DIR):
+	$(call create_dirs, $(DEP_DIR) $(SUB_DIR_DEP))
+	@printf "$(INFO) Created dependencies directory structure\n"
 
 ################################################################################
 #                               MOD BUILD RULES                                #
 ################################################################################
 
-$(OBJ_DIR)/%.o:$(SRC_DIR)/%.cpp $(OBJ_DIR)
+define compile_cpp
 	@printf "$(INFO) files:  $< ...\n"
-	@if $(CXX) $(CXXFLAGS) $(INCLUDES) -MMD -MF $(DEP_DIR)/$*.d -c $< -o $@; then \
+	@if $(CXX) $(CXXFLAGS) $(INCLUDES) \
+		-MMD -MF $(DEP_DIR)/$(1)$*.d -MT $@ \
+		-c $< -o $@; then \
 		printf "$(SUCCESS) Created: $@\n"; \
 	else \
 		printf "$(ERROR) Failed to compile: $<\n"; \
 		exit 1; \
 	fi
+endef
 
-$(NAME): $(OBJS)
-	@ if $(CXX) $(CXXFLAGS) $(INCLUDES) $(OBJS) $(LDLIBS) -o $(NAME); then \
+define compile_c
+	@printf "$(INFO) files:  $< ...\n"
+	@if gcc $(INCLUDES) -MMD -MF $(DEP_DIR)/$(1)$*.d -MT $@ \
+		-c $< -o $@; then \
+		printf "$(SUCCESS) Created: $@\n"; \
+	else \
+		printf "$(ERROR) Failed to compile: $<\n"; \
+		exit 1; \
+	fi
+endef
+
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp $(OBJ_DIR) | $(DEP_DIR)
+	$(call compile_cpp,)
+
+$(OBJ_DIR)/$(WRAPPER_DIR)/%.o: $(WRAPPER_DIR)/%.cpp $(OBJ_DIR) | $(DEP_DIR)
+	$(call compile_cpp,$(WRAPPER_DIR)/)
+
+$(OBJ_DIR)/external/glad/src/%.o: $(GLDIR)/%.c $(OBJ_DIR) | $(DEP_DIR)
+	$(call compile_c,$(GLDIR)/)
+
+$(NAME): $(OBJS) $(GLOBJS) $(WRAPOBJS)
+	@ if $(CXX) $(CXXFLAGS) $(INCLUDES) $(OBJS) $(GLOBJS) $(WRAPOBJS) $(LDLIBS) -o $(NAME); then \
 		printf "$(SUCCESS) Created program: $(NAME)\n"; \
 	else \
 		printf "$(ERROR) when generated $(NAME)"; \
 		exit 1; \
 	fi
+
+################################################################################
+#                               CODE STYLE TARGETS                             #
+################################################################################
+
+lint-build: ## Build the clang-format / clang-tidy Docker image
+	@$(COMPOSE_CMD) build $(LINT_SERVICE)
+
+lint: lint-build ## Run clang-format and clang-tidy (read-only, detailed diff)
+	@$(COMPOSE_CMD) run --rm -e LINT_DIRS="$(LINT_DIRS)" $(LINT_SERVICE)
+
+lint-summary: lint-build ## Run linter in summary mode (counters only)
+	@$(COMPOSE_CMD) run --rm -e LINT_DIRS="$(LINT_DIRS)" -e MODE=summary $(LINT_SERVICE)
+
+lint-fix: lint-build ## Apply clang-format -i to all files (modifies sources)
+	@$(COMPOSE_CMD) run --rm -e LINT_DIRS="$(LINT_DIRS)" -e MODE=fix $(LINT_FIX_SVC)
+
+lint-shell: lint-build ## Open an interactive shell inside the linter container
+	@$(COMPOSE_CMD) run --rm $(LINT_SERVICE) bash
+
+lint-clean: ## Remove the linter Docker image and containers
+	@$(COMPOSE_CMD) down --rmi local
 
 ################################################################################
 #                               CLEANUP TARGETS                                #
@@ -260,5 +371,6 @@ fclean: clean ## Perform a full cleanup
 re: fclean all ## Rebuild everything from mod1 (equivalent to fclean followed by all).
 
 -include $(DEPS)
-
+-include $(GLDEP)
+-include $(WRAPDEP)
 .SILENT:

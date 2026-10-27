@@ -16,6 +16,7 @@
 
 # Debugger Files
 *.pdb
+*.txt
 
 # Compiled Dynamic libraries
 *.so
@@ -63,4 +64,4 @@ vcpkg_installed/
 Testing/
 .cache/
 
-MOD1
+mod1

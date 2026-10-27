@@ -1,0 +1,26 @@
+services:
+  lint:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ../../:/src:ro
+    working_dir: /src
+    environment:
+      - LINT_DIRS=${LINT_DIRS:-src inc Wrapper}
+      - MODE=${MODE:-check}
+      - FORCE_COLOR=1
+    command: ["/opt/lint/run-lint.sh"]
+
+  lint-fix:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ../../:/src        # sin :ro → permite escribir
+    working_dir: /src
+    environment:
+      - LINT_DIRS=${LINT_DIRS:-src inc Wrapper}
+      - MODE=fix
+      - FORCE_COLOR=1
+    command: ["/opt/lint/run-lint.sh"]
