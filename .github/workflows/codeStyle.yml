@@ -2,7 +2,7 @@ name: Code Style
 
 on:
   push:
-    branches: [main]
+    branches: [main, 4-piline]
   pull_request:
     branches: [main, 4-piline]
 
