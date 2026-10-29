@@ -1,89 +1,112 @@
 #include "core/Environment.hpp"
-#include <glad/gl.h>
-#include <glad/glad_glx.h>
 
-#include <X11/Xlib.h>
+#ifndef GLFW_INCLUDE_NONE
+#define GLFW_INCLUDE_NONE
+#endif
+#include <GLFW/glfw3.h>
+#include <glad/gl.h>
+
+#include <chrono>
 #include <cstdio>
 #include <stdexcept>
 
 Environment::~Environment()
 {
 	stop();
-	for (auto& t : m_threads)
-		if (t.joinable())
-			t.join();
+	if (m_glLoaded && !m_windows.empty()) {
+		m_windows.front()->makeCurrent();
+		cleanupGpuResources();
+	}
 }
 
 WWindow& Environment::addWindow(WWindow::Config& cfg)
 {
 	if (m_running.load())
 		throw std::runtime_error("addWindow() after run()");
+
+	if (!m_windows.empty() && cfg.shareContext == nullptr)
+		cfg.shareContext = m_windows.front().get();
+
 	m_windows.emplace_back(new WWindow(cfg));
 	return *m_windows.back();
 }
 
 void Environment::run()
 {
-
 	if (m_windows.empty())
 		return;
 
 	WWindow& first = *m_windows.front();
 
 	first.makeCurrent();
-	if (!gladLoadGL((GLADloadfunc)glXGetProcAddressARB)) {
+	if (!gladLoadGL((GLADloadfunc)glfwGetProcAddress)) {
 		first.releaseCurrent();
 		throw std::runtime_error("gladLoadGL failed");
 	}
+	m_glLoaded = true;
+
+	const char* version	 = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+	const char* vendor	 = reinterpret_cast<const char*>(glGetString(GL_VENDOR));
+	const char* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+
+	std::printf("OpenGL %s | %s | %s\n", version ? version : "?", vendor ? vendor : "?",
+				renderer ? renderer : "?");
 
 	if (m_init)
 		m_init(first);
-	first.releaseCurrent();
+
+	for (std::size_t i = 1; i < m_windows.size(); ++i) {
+		m_windows[i]->makeCurrent();
+		if (m_init)
+			m_init(*m_windows[i]);
+	}
 
 	m_running.store(true);
-	m_threads.reserve(m_windows.size());
-	for (auto& w : m_windows)
-		m_threads.emplace_back(&Environment::windowThread, this, w.get());
-	for (auto& t : m_threads)
-		t.join();
-	m_threads.clear();
-
-	cleanupGpuResources();
-}
-
-void Environment::windowThread(WWindow* win)
-{
-	win->makeCurrent();
-
-	if (m_init && win != m_windows.front().get())
-		m_init(*win);
 
 	auto last = std::chrono::steady_clock::now();
 
-	while (m_running.load() && !win->shouldClose()) {
-		if (!win->pollEvents())
+	while (m_running.load()) {
+		bool anyOpen = false;
+
+		for (auto& window : m_windows) {
+			if (!window->shouldClose()) {
+				anyOpen = true;
+				break;
+			}
+		}
+		if (!anyOpen)
 			break;
+
+		for (auto& window : m_windows)
+			window->input().beginFrame();
+
+		WWindow::pollEventsAll();
 
 		auto  now = std::chrono::steady_clock::now();
 		float dt  = std::chrono::duration<float>(now - last).count();
 		last	  = now;
 
-		if (m_update)
-			m_update(*win, dt);
-		if (m_render)
-			m_render(*win);
+		for (auto& window : m_windows) {
+			if (window->shouldClose())
+				continue;
 
-		win->swapBuffers();
+			window->makeCurrent();
+
+			if (m_update)
+				m_update(*window, dt);
+			if (m_render)
+				m_render(*window);
+
+			window->swapBuffers();
+			window->input().endFrame();
+		}
 	}
 
-	win->releaseCurrent();
+	first.makeCurrent();
+	cleanupGpuResources();
 }
 
 void Environment::cleanupGpuResources()
 {
-	if (m_gpuResources.empty() || m_windows.empty())
-		return;
-	m_windows.front()->makeCurrent();
 	m_gpuResources.clear();
-	m_windows.front()->releaseCurrent();
 }
