@@ -2,11 +2,8 @@
 #include "core/WWindow.hpp"
 
 #include <atomic>
-#include <chrono>
 #include <functional>
 #include <memory>
-#include <stdexcept>
-#include <thread>
 #include <vector>
 
 class Environment
@@ -39,13 +36,12 @@ public:
 	}
 
 private:
-	void windowThread(WWindow* win);
 	void cleanupGpuResources();
 
 	std::vector<std::unique_ptr<WWindow>> m_windows;
 	std::vector<std::shared_ptr<void>>	  m_gpuResources;
-	std::vector<std::thread>			  m_threads;
 	std::atomic<bool>					  m_running{false};
+	bool								  m_glLoaded = false;
 
 	InitCallback   m_init;
 	UpdateCallback m_update;
