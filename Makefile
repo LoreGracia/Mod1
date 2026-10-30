@@ -61,17 +61,23 @@ MATH_DIR = $(WRAPPER_DIR)/math
 RENDER_DIR = $(WRAPPER_DIR)/render
 SCENE_DIR = $(WRAPPER_DIR)/scene
 
+WATER_DIR = water
+
 SUB_DIR_OBJ =	$(OBJ_DIR)/$(EXTER_DIR) $(OBJ_DIR)/$(GLDIR) \
                 $(OBJ_DIR)/$(WRAPPER_DIR) $(OBJ_DIR)/$(CORE_DIR) \
                 $(OBJ_DIR)/$(MATH_DIR) $(OBJ_DIR)/$(RENDER_DIR) \
-                $(OBJ_DIR)/$(SCENE_DIR)
+                $(OBJ_DIR)/$(SCENE_DIR) \
+				$(OBJ_DIR)/$(WATER_DIR)
 
 SUB_DIR_DEP =	$(DEP_DIR)/$(EXTER_DIR) $(DEP_DIR)/$(GLDIR) \
                 $(DEP_DIR)/$(WRAPPER_DIR) $(DEP_DIR)/$(CORE_DIR) \
                 $(DEP_DIR)/$(MATH_DIR) $(DEP_DIR)/$(RENDER_DIR) \
-                $(DEP_DIR)/$(SCENE_DIR)
+                $(DEP_DIR)/$(SCENE_DIR) \
+				$(DEP_DIR)/$(WATER_DIR)
 
-SOURCES := main.cpp
+
+
+SOURCES := $(WATER_DIR)/Particles.cpp main.cpp
 GLSOURCES := $(GLDIR)/gl.c
 WRAPSOURCES :=	$(CORE_DIR)/WWindow.cpp $(CORE_DIR)/Environment.cpp $(CORE_DIR)/Input.cpp \
                 $(RENDER_DIR)/Shader.cpp $(RENDER_DIR)/Mesh.cpp $(RENDER_DIR)/Renderer.cpp \
@@ -89,6 +95,7 @@ INCLUDES += $(addprefix -I, ./Wrapper/core)
 INCLUDES += $(addprefix -I, ./Wrapper/math)
 INCLUDES += $(addprefix -I, ./Wrapper/render)
 INCLUDES += $(addprefix -I, ./Wrapper/scene)
+INCLUDES += $(addprefix -I, ./src/water)
 
 OBJS =  $(addprefix $(OBJ_DIR)/, $(SOURCES:.cpp=.o))
 DEPS = $(addprefix $(DEP_DIR)/, $(SOURCES:.cpp=.d))
