@@ -14,13 +14,13 @@
 #include <Mesh.hpp>
 #include <Renderer.hpp>
 #include <Shader.hpp>
-#include <scene/Transform.hpp>
 #include <WWindow.hpp>
 #include <cstdint>
 #include <cstdio>
 #include <glm.hpp>
 #include <gtc/type_ptr.hpp>
 #include <memory>
+#include <scene/Transform.hpp>
 #include <vector>
 
 int main()
@@ -36,7 +36,7 @@ int main()
 		cfg.glMinor		= 3;
 		cfg.coreProfile = true;
 		cfg.vsync		= true;
-		env.addWindow(cfg); // solo una ventana; usamos env por comodidad
+		env.addWindow(cfg);	 // solo una ventana; usamos env por comodidad
 
 		struct State
 		{
@@ -138,9 +138,9 @@ int main()
 				move -= right;
 
 			if (in.isMouseButtonDown(Mouse::Button::Right)) {
-				const float panSens = 0.02f; // píxeles → unidades de mundo
-				glm::vec3	pan = right * (-static_cast<float>(in.mouseDeltaX()) * panSens) +
-							  up * (static_cast<float>(in.mouseDeltaY()) * panSens);
+				const float panSens = 0.02f;  // píxeles → unidades de mundo
+				glm::vec3	pan		= right * (-static_cast<float>(in.mouseDeltaX()) * panSens) +
+								up * (static_cast<float>(in.mouseDeltaY()) * panSens);
 				st.cam.move(pan);
 			}
 

@@ -1,5 +1,4 @@
 #include <WWindow.hpp>
-
 #include <cstdio>
 #include <mutex>
 #include <stdexcept>
@@ -7,7 +6,7 @@
 namespace
 {
 std::mutex g_glfwMutex;
-int		   g_glfwRefCount = 0;
+int		   g_glfwRefCount	 = 0;
 bool	   g_glfwInitialized = false;
 
 void errorCallback(int code, const char* description)
@@ -44,7 +43,7 @@ WWindow* windowFrom(GLFWwindow* window)
 {
 	return static_cast<WWindow*>(glfwGetWindowUserPointer(window));
 }
-} // namespace
+}  // namespace
 
 WWindow::WWindow(Config& conf)
 {
@@ -56,9 +55,8 @@ WWindow::WWindow(Config& conf)
 		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, conf.glMinor);
 
 		if (conf.glMajor > 3 || (conf.glMajor == 3 && conf.glMinor >= 2)) {
-			glfwWindowHint(GLFW_OPENGL_PROFILE,
-						   conf.coreProfile ? GLFW_OPENGL_CORE_PROFILE
-											: GLFW_OPENGL_COMPAT_PROFILE);
+			glfwWindowHint(GLFW_OPENGL_PROFILE, conf.coreProfile ? GLFW_OPENGL_CORE_PROFILE
+																 : GLFW_OPENGL_COMPAT_PROFILE);
 		}
 
 		glfwWindowHint(GLFW_RESIZABLE, conf.resizable ? GLFW_TRUE : GLFW_FALSE);
@@ -239,8 +237,8 @@ void WWindow::framebufferSizeCallback(GLFWwindow* window, int width, int height)
 
 	if (!self)
 		return;
-	self->m_fbWidth	 = width;
-	self->m_fbHeight = height;
+	self->m_fbWidth		= width;
+	self->m_fbHeight	= height;
 	self->m_needsResize = true;
 }
 

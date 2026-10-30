@@ -4,7 +4,6 @@
 #define GLFW_INCLUDE_NONE
 #endif
 #include <GLFW/glfw3.h>
-
 #include <Input.hpp>
 #include <atomic>
 #include <string>
@@ -20,11 +19,11 @@ public:
 		WWindow*	shareContext = nullptr;
 		int			glMajor = 3, glMinor = 3;
 		bool		coreProfile = true;
-		bool		resizable = true;
-		bool		visible = true;
-		bool		decorated = true;
-		bool		vsync = true;
-		int			samples = 0;
+		bool		resizable	= true;
+		bool		visible		= true;
+		bool		decorated	= true;
+		bool		vsync		= true;
+		int			samples		= 0;
 	};
 
 	explicit WWindow(Config& conf);
@@ -51,10 +50,7 @@ public:
 	int	  height() const { return m_height; }
 	int	  framebufferWidth() const { return m_fbWidth; }
 	int	  framebufferHeight() const { return m_fbHeight; }
-	float aspect() const
-	{
-		return m_height > 0 ? float(m_width) / float(m_height) : 1.f;
-	}
+	float aspect() const { return m_height > 0 ? float(m_width) / float(m_height) : 1.f; }
 
 	bool shouldClose() const;
 	void requestClose();
@@ -73,11 +69,11 @@ private:
 	static void windowCloseCallback(GLFWwindow* window);
 	static void windowFocusCallback(GLFWwindow* window, int focused);
 
-	GLFWwindow*		  m_window	 = nullptr;
-	int				  m_width	 = 0;
-	int				  m_height	 = 0;
-	int				  m_fbWidth	 = 0;
-	int				  m_fbHeight = 0;
+	GLFWwindow*		  m_window		= nullptr;
+	int				  m_width		= 0;
+	int				  m_height		= 0;
+	int				  m_fbWidth		= 0;
+	int				  m_fbHeight	= 0;
 	bool			  m_needsResize = false;
 	Input			  m_input;
 	std::atomic<bool> m_shouldClose{false};

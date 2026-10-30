@@ -17,7 +17,7 @@ bool isKnownKey(int key)
 		   (key >= GLFW_KEY_KP_0 && key <= GLFW_KEY_KP_EQUAL) ||
 		   (key >= GLFW_KEY_LEFT_SHIFT && key <= GLFW_KEY_MENU);
 }
-} // namespace
+}  // namespace
 
 Key::Code Key::fromGlfw(int key)
 {
@@ -58,14 +58,14 @@ void Input::reset()
 	m_buttonsDown.clear();
 	m_buttonsPressed.clear();
 	m_buttonsReleased.clear();
-	m_mouseX		= 0.0;
-	m_mouseY		= 0.0;
-	m_lastMouseX	= 0.0;
-	m_lastMouseY	= 0.0;
-	m_deltaX		= 0.0;
-	m_deltaY		= 0.0;
-	m_scrollDeltaX	= 0.0;
-	m_scrollDeltaY	= 0.0;
+	m_mouseX		 = 0.0;
+	m_mouseY		 = 0.0;
+	m_lastMouseX	 = 0.0;
+	m_lastMouseY	 = 0.0;
+	m_deltaX		 = 0.0;
+	m_deltaY		 = 0.0;
+	m_scrollDeltaX	 = 0.0;
+	m_scrollDeltaY	 = 0.0;
 	m_firstMouseMove = true;
 }
 
@@ -114,8 +114,8 @@ void Input::onMouseMove(double x, double y)
 
 	m_deltaX += x - m_lastMouseX;
 	m_deltaY += y - m_lastMouseY;
-	m_mouseX = x;
-	m_mouseY = y;
+	m_mouseX	 = x;
+	m_mouseY	 = y;
 	m_lastMouseX = x;
 	m_lastMouseY = y;
 }
