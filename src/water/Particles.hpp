@@ -16,12 +16,13 @@ class Particles {
 		struct Config {
 			// SPH
 			float h				= 0.12f;     // radio de influencia
-			float restDensity	= 1000.f;
-			float stiffness		= 250.f;
+			float restDensity	= 400.f;
+			float stiffness		= 150.f;
 			float viscosity		= 0.08f;
 			float gravity		= -9.8f;
 			float damping		= 0.999f;
 			int   substeps		= 4;
+			float particleMass = 0.2f;
 
 			// Colisión
 			glm::vec3 boundsMin{-1.f, 0.f, -1.f};
@@ -39,6 +40,7 @@ class Particles {
 		~Particles();
 
 		void init(size_t count, Mode mode);
+		void init(size_t count, Mode mode, const Config& cfg);
 		void update(float dt);
 		void uploadToGPU();
 		void render(Shader& shader, const glm::mat4& viewProj);
@@ -75,6 +77,7 @@ class Particles {
 		std::vector<float>		m_densities;   // flat float
 		Mesh					m_mesh;
 		HeightFn				m_heightFn;
+		int						m_debugCounter = 0;
 
 		// Spatial hash: cell hash -> índices de partículas en esa celda
 		std::unordered_map<int64_t, std::vector<size_t>> m_hash;
