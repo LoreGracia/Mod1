@@ -17,7 +17,20 @@ public:
 
 	bool loadFromSource(const std::string& vertSrc, const std::string& fragSrc);
 	bool loadFromFile(const std::string& vertPath, const std::string& fragPath);
+	// ── Compute Shaders ─────────────────────────────────────────────
+	bool loadComputeFromSource(const std::string& computeSrc);
+	bool loadComputeFromFile  (const std::string& computePath);
 
+	// Lanza el compute. Internamente hace glUseProgram + glDispatchCompute.
+	// Después DEBES llamar a glMemoryBarrier(...) tú mismo, indicando
+	// qué buffers vas a leer (el shader no puede saberlo).
+	void dispatch(GLuint groupsX, GLuint groupsY, GLuint groupsZ) const;
+
+	// Helper: dispatch suficiente para cubrir una rejilla (gridX, gridY, gridZ)
+	// asumiendo un local_size = (localX, localY, localZ) declarado en el .comp.
+	void dispatchForGrid(GLuint gridX, GLuint gridY, GLuint gridZ,
+                     GLuint localX = 4, GLuint localY = 4, GLuint localZ = 4) const;
+	
 	void   use() const { glUseProgram(m_program); }
 	GLuint id() const { return m_program; }
 

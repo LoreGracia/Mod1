@@ -57,6 +57,7 @@ class Particles {
 	private:
 		// ── Física ──────────────────────────────────────────────────────
 		void stepSPH(float dt);
+		float sampleDensity(const glm::vec3& point) const;
 		void integrate(float dt);
 		void collide();
 

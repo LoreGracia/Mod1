@@ -33,8 +33,8 @@ int main() {
         cfg.title       = "SPH Water — 1=rise 2=wave 3=rain  R=reset  Esc=close";
         cfg.width       = 1000;
         cfg.height      = 700;
-        cfg.glMajor     = 3;
-        cfg.glMinor     = 3;
+        cfg.glMajor     = 4;
+        cfg.glMinor     = 6;
         cfg.coreProfile = true;
         cfg.vsync       = true;
         env.addWindow(cfg);
