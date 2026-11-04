@@ -204,3 +204,7 @@ void Shader::setMat4(const char* n, const glm::mat4& m) const
 {
 	glUniformMatrix4fv(location(n), 1, GL_FALSE, glm::value_ptr(m));
 }
+
+void Shader::setIVec3(const char* name, const glm::ivec3& v) const {
+    glUniform3i(location(name), v.x, v.y, v.z);
+}

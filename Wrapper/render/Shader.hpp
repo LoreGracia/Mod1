@@ -39,6 +39,8 @@ public:
 	void setVec3(const char* name, const glm::vec3& v) const;
 	void setVec4(const char* name, const glm::vec4& v) const;
 	void setMat4(const char* name, const glm::mat4& m) const;
+	
+	void setIVec3(const char* name, const glm::ivec3& v) const;
 
 private:
 	GLint  location(const char* name) const;

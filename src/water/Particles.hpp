@@ -44,6 +44,7 @@ class Particles {
 		void update(float dt);
 		void uploadToGPU();
 		void render(Shader& shader, const glm::mat4& viewProj);
+		const std::vector<Particle>& getParticles() const { return m_particles; }
 
 		void reset(Mode mode);
 		void setConfig(const Config& cfg) { m_cfg = cfg; }

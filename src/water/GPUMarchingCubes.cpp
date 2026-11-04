@@ -1,6 +1,6 @@
-#include "water/GPUMarchingCubes.hpp"
+#include <GPUMarchingCubes.hpp>
 
-#include <glm/gtc/type_ptr.hpp>
+#include <gtc/type_ptr.hpp>
 
 #include <cstdio>
 #include <vector>
@@ -172,14 +172,12 @@ void GPUMarchingCubes::generateMesh() {
 
     // 3) Uniforms
     m_computeShader.use();
-    m_computeShader.setVec3 ("uGridMin",  m_boundsMin);
-    m_computeShader.setVec3 ("uGridMax",  m_boundsMax);
-    m_computeShader.setFloat("uIsoLevel", m_isoLevel);
-
-    // Grid size como 3 ints separados (más simple que meter setIVec3 al Shader)
-    m_computeShader.setInt("uGridSizeX", m_gridSize.x);
-    m_computeShader.setInt("uGridSizeY", m_gridSize.y);
-    m_computeShader.setInt("uGridSizeZ", m_gridSize.z);
+	m_computeShader.use();
+	m_computeShader.setVec3 ("uGridMin",        m_boundsMin);
+	m_computeShader.setVec3 ("uGridMax",        m_boundsMax);
+	m_computeShader.setIVec3("uGridSize",       m_gridSize);   // ← setIVec3
+	m_computeShader.setFloat("uIsoLevel",       m_isoLevel);
+	m_computeShader.setFloat("uParticleRadius", 0.25f);         // ← NUEVO
 
     // 4) Dispatch. Asumimos local_size = (4,4,4) en el .comp.
     m_computeShader.dispatchForGrid(

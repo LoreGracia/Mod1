@@ -1,12 +1,12 @@
 #pragma once
 #include <glad/gl.h>
-#include <glm/glm.hpp>
+#include <glm.hpp>
 
 #include <string>
 #include <vector>
 
 #include "Shader.hpp"            // Shader m_computeShader / m_meshShader
-#include "water/Particle.hpp"    // std::vector<Particle> (ajusta la ruta si no usas -Isrc)
+#include "Particle.hpp"    // std::vector<Particle> (ajusta la ruta si no usas -Isrc)
 
 class GPUMarchingCubes {
 public:

@@ -24,6 +24,7 @@
 #include <vector>
 #include <Particle.hpp>
 #include <Particles.hpp>
+#include <GPUMarchingCubes.hpp>
 
 int main() {
     try {
@@ -44,6 +45,7 @@ int main() {
             Renderer renderer;
             std::shared_ptr<Shader>   shader;
             std::shared_ptr<Particles> water;
+			std::shared_ptr<GPUMarchingCubes> marchingCubes;
             Particles::Mode mode = Particles::Mode::UniformRise;
         } st;
 
@@ -104,6 +106,18 @@ int main() {
 			pcfg.pointSize = 15.0f;     // Puntos MUY grandes para que se solapen entre sí
 			pcfg.alpha     = 0.9f;
 
+			st.marchingCubes = std::make_shared<GPUMarchingCubes>();
+			bool ok = st.marchingCubes->init(
+				pcfg.boundsMin, 
+				pcfg.boundsMax, 
+				32, // Resolución baja para probar
+				"src/water/shader/marching_cubes.comp",
+				"src/water/shader/meshVertex.glsl",
+				"src/water/shader/meshFrag.frag"
+			);
+			if (!ok) {
+				std::fprintf(stderr, "Failed to init Marching Cubes\n");
+			}
 			st.water->init(1000, st.mode, pcfg);
 
             // (Opcional) colisión con terreno:
@@ -122,6 +136,7 @@ int main() {
         });
 
         env.setUpdate([&](WWindow& w, float dt) {
+			st.marchingCubes->uploadParticles(st.water->getParticles());
             Input& in = w.input();
             if (in.isKeyPressed(Key::Code::Escape)) w.requestClose();
 
@@ -174,8 +189,13 @@ int main() {
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             glDepthMask(GL_FALSE);
 
-            st.water->render(*st.shader, vp);
+            // st.water->render(*st.shader, vp);
 
+			st.marchingCubes->generateMesh();
+			static int dbg = 0;
+			if (++dbg % 60 == 0)
+				std::printf("[MC] vertexCount = %u\n", st.marchingCubes->vertexCount());
+			st.marchingCubes->render(vp);
             glDepthMask(GL_TRUE);
             glDisable(GL_BLEND);
         });
