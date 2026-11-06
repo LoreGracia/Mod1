@@ -1,23 +1,34 @@
 #version 430 core
 
-in vec3 vNormal; // Lo calcularemos en el fragment, pero lo declaramos aquí por convención
-
-uniform vec3 uLightDir; // Dirección de la luz
-uniform vec4 uWaterColor;
-
+in vec3 vWorldPos;
 out vec4 FragColor;
 
 void main() {
-    // Reconstruir la normal usando las derivadas de la posición en espacio de pantalla
-    // (Nota: para esto necesitaríamos la posición en el vertex shader, 
-    //  pero para un color plano con un poco de sombra, podemos usar una normal falsa
-    //  o pasar la posición. Vamos a hacerlo simple por ahora).
+    vec3 dx = dFdx(vWorldPos);
+    vec3 dy = dFdy(vWorldPos);
+    vec3 normal = normalize(cross(dx, dy));
+
+    vec3 lightDir = normalize(vec3(1.0, 2.0, 1.0));
+    vec3 viewDir = normalize(vec3(0.0, 0.0, 1.0)); // Cámara mirando al frente
+
+    float diff = max(dot(normal, lightDir), 0.0);
     
+    // Reflejo especular (el brillo del sol)
+    vec3 halfwayDir = normalize(lightDir + viewDir);
+    float spec = pow(max(dot(normal, halfwayDir), 0.0), 128.0);
+    
+    // Efecto Fresnel: cuando miras el agua en ángulo, es más opaca/reflectante
+    float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.0);
+
     // Color base del agua
-    vec3 baseColor = vec3(0.1, 0.4, 0.8);
+    vec3 waterColor = vec3(0.05, 0.35, 0.7); 
     
-    // Simulamos una iluminación simple basada en la posición Y (más claro arriba)
-    // Esto es un placeholder hasta que añadamos normales reales.
+    // Mezclamos iluminación
+    vec3 finalColor = (waterColor * diff) + vec3(spec);
     
-    FragColor = vec4(baseColor, 1.0);
+    // El alpha (transparencia) depende del Fresnel. 
+    // En el centro del charco mirando desde arriba, será más transparente.
+    float alpha = mix(0.4, 0.9, fresnel); 
+
+    FragColor = vec4(finalColor + vec3(0.1, 0.2, 0.3), alpha);
 }

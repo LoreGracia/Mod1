@@ -117,13 +117,16 @@ void GPUMarchingCubes::createBuffers() {
 // ─────────────────────────────────────────────────────────────────────
 
 void GPUMarchingCubes::uploadParticles(const std::vector<Particle>& particles) {
-    if (!m_initialized || particles.empty()) return;
+    if (!m_initialized || particles.empty())
+		return;
 
+	//std::printf("[MC] uploadParticles: %zu\n", particles.size());
     // ¿Hace falta reasignar el SSBO?
     const GLuint needed = static_cast<GLuint>(particles.size());
     if (needed > m_maxParticles) {
         GLuint newCap = m_maxParticles;
-        while (newCap < needed) newCap *= 2;
+        while (newCap < needed)
+			newCap *= 2;
         m_maxParticles = newCap;
 
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_particleSSBO);
@@ -132,7 +135,7 @@ void GPUMarchingCubes::uploadParticles(const std::vector<Particle>& particles) {
                      nullptr,
                      GL_DYNAMIC_DRAW);
     }
-
+	m_particleCount = static_cast<GLuint>(particles.size());
     // Empaquetar position como vec4 (xyz + w=1.0). El shader lo declara
     // como `vec4 particles[]` para respetar el alignment natural de vec4.
     std::vector<glm::vec4> staging(particles.size());
@@ -145,7 +148,13 @@ void GPUMarchingCubes::uploadParticles(const std::vector<Particle>& particles) {
                     0,
                     static_cast<GLsizeiptr>(staging.size() * sizeof(glm::vec4)),
                     staging.data());
+	std::vector<glm::vec4> dbg(3);
+	glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(glm::vec4)*3, dbg.data());
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+	//std::printf("[MC] SSBO check: p0=(%.3f,%.3f,%.3f,%.3f) p1=(%.3f,%.3f,%.3f,%.3f) p2=(%.3f,%.3f,%.3f,%.3f)\n",
+	//	dbg[0].x,dbg[0].y,dbg[0].z,dbg[0].w,
+	//	dbg[1].x,dbg[1].y,dbg[1].z,dbg[1].w,
+	//	dbg[2].x,dbg[2].y,dbg[2].z,dbg[2].w);
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -153,16 +162,24 @@ void GPUMarchingCubes::uploadParticles(const std::vector<Particle>& particles) {
 // ─────────────────────────────────────────────────────────────────────
 
 void GPUMarchingCubes::generateMesh() {
-    if (!m_initialized) return;
 
-    // 1) Reset del contador atómico a 0. Cada dispatch empieza de cero,
+	if (!m_initialized)
+		return;
+	//std::printf("[MC] generateMesh: particleCount=%u isoLevel=%.4f\n", m_particleCount, m_isoLevel);
+	// 1) Reset del contador atómico a 0. Cada dispatch empieza de cero,
     //    si no el draw leería basura del frame anterior.
-    {
-        GLuint zero = 0;
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_counterSSBO);
-        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(GLuint), &zero);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-    }
+	{
+		GLuint zero = 0;
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_counterSSBO);
+		glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(GLuint), &zero);
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+		m_cachedVertexCount = 0;
+	}
+
+	if (m_particleCount == 0) {
+		m_cachedVertexCount = 0;
+		return;
+	}
 
     // 2) Bindear los 3 SSBOs a sus binding points. Deben coincidir con
     //    los `layout(std430, binding = N)` del .comp.
@@ -172,12 +189,17 @@ void GPUMarchingCubes::generateMesh() {
 
     // 3) Uniforms
     m_computeShader.use();
-	m_computeShader.use();
 	m_computeShader.setVec3 ("uGridMin",        m_boundsMin);
 	m_computeShader.setVec3 ("uGridMax",        m_boundsMax);
 	m_computeShader.setIVec3("uGridSize",       m_gridSize);   // ← setIVec3
-	m_computeShader.setFloat("uIsoLevel",       m_isoLevel);
-	m_computeShader.setFloat("uParticleRadius", 0.25f);         // ← NUEVO
+	// m_computeShader.setFloat("uIsoLevel",       m_isoLevel);
+	m_computeShader.setFloat("uParticleRadius", 0.4f);         // ← NUEVO
+	m_computeShader.setInt("uParticleCount", static_cast<int>(m_particleCount));
+
+	// std::printf("[MC] dispatching %u x %u x %u groups\n",
+    //             (m_gridSize.x + 3) / 4,
+    //             (m_gridSize.y + 3) / 4,
+    //             (m_gridSize.z + 3) / 4); 
 
     // 4) Dispatch. Asumimos local_size = (4,4,4) en el .comp.
     m_computeShader.dispatchForGrid(
@@ -195,6 +217,7 @@ void GPUMarchingCubes::generateMesh() {
 
     // 6) Leer cuántos vértices generó realmente el compute
     m_cachedVertexCount = readVertexCounter();
+	//std::printf("[MC] vertexCount after dispatch = %u\n", m_cachedVertexCount);
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -245,8 +268,9 @@ void GPUMarchingCubes::release() {
     if (m_counterSSBO)  { glDeleteBuffers(1, &m_counterSSBO);   m_counterSSBO  = 0; }
     if (m_emptyVAO)     { glDeleteVertexArrays(1, &m_emptyVAO); m_emptyVAO     = 0; }
 
-    m_maxParticles      = 0;
-    m_maxVertices       = 0;
-    m_cachedVertexCount = 0;
-    m_initialized       = false;
+    m_maxParticles		= 0;
+    m_maxVertices		= 0;
+    m_cachedVertexCount	= 0;
+	m_particleCount		= 0;
+    m_initialized		= false;
 }

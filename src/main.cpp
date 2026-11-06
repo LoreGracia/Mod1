@@ -26,16 +26,19 @@
 #include <Particles.hpp>
 #include <GPUMarchingCubes.hpp>
 
+// Debug flag: set to true to render SPH particles as points on top of the mesh.
+// Useful for diagnosing whether Marching Cubes is correctly wrapping the fluid.
+static constexpr bool RENDER_POINTS = false;
+
 int main() {
     try {
         Environment env;
 
         WWindow::Config cfg;
-        cfg.title       = "SPH Water — 1=rise 2=wave 3=rain  R=reset  Esc=close";
-        cfg.width       = 1000;
-        cfg.height      = 700;
+        cfg.width       = 800;
+        cfg.height      = 800;
         cfg.glMajor     = 4;
-        cfg.glMinor     = 6;
+        cfg.glMinor     = 3;          // H-01: 4.3 is the minimum for compute shaders
         cfg.coreProfile = true;
         cfg.vsync       = true;
         env.addWindow(cfg);
@@ -43,124 +46,112 @@ int main() {
         struct State {
             Camera   cam;
             Renderer renderer;
-            std::shared_ptr<Shader>   shader;
-            std::shared_ptr<Particles> water;
-			std::shared_ptr<GPUMarchingCubes> marchingCubes;
-            Particles::Mode mode = Particles::Mode::UniformRise;
+            std::shared_ptr<Shader>           pointShader;   // optional, for RENDER_POINTS
+            std::shared_ptr<Particles>        water;
+            std::shared_ptr<GPUMarchingCubes> marchingCubes;
+            Particles::Mode                   mode = Particles::Mode::UniformRise;
         } st;
 
         env.setInit([&](WWindow& w) {
-            st.shader = std::make_shared<Shader>();
-            if (!st.shader->loadFromSource(
-                "#version 330 core\n"
-                "layout(location=0) in vec3 aPos;\n"
-                "layout(location=1) in float aDensity;\n"
-                "uniform mat4 uViewProj;\n"
-                "uniform float uPointSize, uDensityMin, uDensityMax;\n"
-                "out float vDensity;\n"
-                "void main(){\n"
-                "  vDensity = aDensity;\n"
-                "  gl_Position = uViewProj * vec4(aPos, 1.0);\n"
-                "  float t = clamp((aDensity - uDensityMin) /\n"
-                "                  max(uDensityMax - uDensityMin, 0.001), 0.0, 1.0);\n"
-                "  gl_PointSize = uPointSize * (0.9 + 2.0 * t);\n"
-                "}\n",
-                "#version 330 core\n"
-                "in float vDensity;\n"
-                "uniform vec3 uColorLow, uColorHigh;\n"
-                "uniform float uDensityMin, uDensityMax, uAlpha;\n"
-                "out vec4 FragColor;\n"
-                "void main(){\n"
-                "  vec2 uv = gl_PointCoord * 2.0 - 1.0;\n"
-                "  float r2 = dot(uv, uv);\n"
-                "  if (r2 > 1.0) discard;\n"
-                "  float edge = smoothstep(1.0, 0.8, r2);\n"
-                "  float t = clamp((vDensity - uDensityMin) /\n"
-                "                  max(uDensityMax - uDensityMin, 0.001), 0.0, 1.0);\n"
-				"  float finalAlpha = mix(0.4, 1.0, t);\n"
-                "  FragColor = vec4(mix(uColorLow, uColorHigh, t), uAlpha * edge);\n"
-                "}\n"))
-            {
-                std::fprintf(stderr, "shader failed\n");
-                return;
+            // ── 1. Optional point shader (debug only) ───────────────────
+            if (RENDER_POINTS) {
+                st.pointShader = std::make_shared<Shader>();
+                if (!st.pointShader->loadFromFile(
+                        "src/water/shader/waterVertex.glsl",
+                        "src/water/shader/waterFrag.frag")) {
+                    std::fprintf(stderr, "Point shader failed to load\n");
+                    return;
+                }
             }
 
-            // Sistema de agua
+            // ── 2. SPH configuration ────────────────────────────────────
+            Particles::Config pcfg;
+            pcfg.boundsMin       = {-0.95f, -0.95f, -0.95f};
+            pcfg.boundsMax       = { 0.95f,  0.95f,  0.95f};
+            pcfg.h               = 0.25f;
+            pcfg.restDensity     = 150.f;
+            pcfg.particleMass    = 0.5f;
+            pcfg.stiffness       = 80.f;
+            pcfg.viscosity       = 0.3f;
+            pcfg.gravity         = -9.8f;
+            pcfg.damping         = 0.92f;
+            pcfg.substeps        = 8;
+            pcfg.wallRestitution = 0.0f;
+            pcfg.pointSize       = 15.0f;
+            pcfg.alpha           = 0.9f;
+
+            // ── 3. Marching Cubes (loads its own shaders from disk) ─────
+            st.marchingCubes = std::make_shared<GPUMarchingCubes>();
+            bool mcOk = st.marchingCubes->init(
+                pcfg.boundsMin,
+                pcfg.boundsMax,
+            	32,                                          // grid resolution
+                "src/water/shader/marching_cubes.comp",
+                "src/water/shader/meshVertex.glsl",
+                "src/water/shader/meshFrag.frag");
+            if (!mcOk) {
+                std::fprintf(stderr, "Failed to init Marching Cubes\n");
+                return;
+            }
+			st.marchingCubes->setIsoLevel(0.002f);
+            // ── 4. Water simulation ─────────────────────────────────────
             st.water = std::make_shared<Particles>();
-			Particles::Config pcfg;
-			// Caja un poco más pequeña (2x1.5x2 = 6 unidades cúbicas)
-			pcfg.boundsMin = {-1.0f, -1.f, -1.0f};
-			pcfg.boundsMax = { 1.0f, 1.0f,  1.0f}; 
+            st.water->init(1000, st.mode, pcfg);
 
-			pcfg.h = 0.25f;             // Radio más pequeño porque la caja es más pequeña
-			pcfg.restDensity  = 150.f;  
-			pcfg.particleMass = 0.5f;  // Masa más pequeña para que no haya picos de presión
-			pcfg.stiffness    = 80.f;   // Fuerza de empuje moderada
-			pcfg.viscosity    = 0.3f;   // ¡CLAVE! Subimos mucho la viscosidad. Esto frena el efecto "gas" y hace que fluyan como un bloque de agua.
-			pcfg.gravity      = -9.8f;
-			pcfg.damping      = 0.95f;
-			pcfg.substeps     = 8;      // Subimos a 8 para que la simulación sea más estable y suave
-
-			pcfg.wallRestitution = 0.0f; 
-
-			pcfg.pointSize = 15.0f;     // Puntos MUY grandes para que se solapen entre sí
-			pcfg.alpha     = 0.9f;
-
-			st.marchingCubes = std::make_shared<GPUMarchingCubes>();
-			bool ok = st.marchingCubes->init(
-				pcfg.boundsMin, 
-				pcfg.boundsMax, 
-				32, // Resolución baja para probar
-				"src/water/shader/marching_cubes.comp",
-				"src/water/shader/meshVertex.glsl",
-				"src/water/shader/meshFrag.frag"
-			);
-			if (!ok) {
-				std::fprintf(stderr, "Failed to init Marching Cubes\n");
-			}
-			st.water->init(1000, st.mode, pcfg);
-
-            // (Opcional) colisión con terreno:
-            // st.water->setTerrainHeight([](float x, float z) {
-            //     return 0.2f * std::sin(x * 3.f) * std::cos(z * 3.f);
-            // });
+            // ── 5. Camera ───────────────────────────────────────────────
             st.cam = Camera({3.f, 3.f, 4.f}, {0.f, 1.f, 0.f});
 
+            // ── 6. Initial GL state ─────────────────────────────────────
             st.renderer.depthTest(true);
             st.renderer.cullFace(false);
-            st.renderer.blend(false);   // el blending de partículas se activa en setRender
+            st.renderer.blend(false);   // opaque mesh by default
 
-            glEnable(GL_PROGRAM_POINT_SIZE);
+            if (RENDER_POINTS) {
+                glEnable(GL_PROGRAM_POINT_SIZE);
+            }
 
             (void)w;
         });
 
         env.setUpdate([&](WWindow& w, float dt) {
-			st.marchingCubes->uploadParticles(st.water->getParticles());
             Input& in = w.input();
-            if (in.isKeyPressed(Key::Code::Escape)) w.requestClose();
 
-            // Cambiar modo
+            if (in.isKeyPressed(Key::Code::Escape))
+                w.requestClose();
+
+            // ── Mode switching ─────────────────────────────────────────
             if (in.isKeyPressed(Key::Code::Num1)) { st.mode = Particles::Mode::UniformRise; st.water->reset(st.mode); }
             if (in.isKeyPressed(Key::Code::Num2)) { st.mode = Particles::Mode::Wave;        st.water->reset(st.mode); }
             if (in.isKeyPressed(Key::Code::Num3)) { st.mode = Particles::Mode::Rain;        st.water->reset(st.mode); }
             if (in.isKeyPressed(Key::Code::R))    { st.water->reset(st.mode); }
+            if (in.isKeyPressed(Key::Code::Space)) {
+                st.water->reset(st.mode);
+                std::printf("[reset] Simulation reset\n");
+            }
 
-            // Física
+            // ── Physics first ──────────────────────────────────────────
             st.water->update(dt);
-            st.water->uploadToGPU();
 
-            // Cámara
-            float speed = 3.f * dt;
+            // ── M-05: upload particles AFTER the physics update ────────
+            st.marchingCubes->uploadParticles(st.water->getParticles());
+
+            // Only upload point VBOs if we're actually going to draw points.
+            if (RENDER_POINTS)
+                st.water->uploadToGPU();
+
+            // ── Camera ─────────────────────────────────────────────────
+            float     speed = 3.f * dt;
             glm::vec3 fwd   = st.cam.forward();
             glm::vec3 right = st.cam.right();
             glm::vec3 up    = st.cam.up();
+
             glm::vec3 move{0.f};
             if (in.isKeyDown(Key::Code::W)) move += fwd;
             if (in.isKeyDown(Key::Code::S)) move -= fwd;
             if (in.isKeyDown(Key::Code::D)) move += right;
             if (in.isKeyDown(Key::Code::A)) move -= right;
-            if (glm::length(move) > 1e-6f) st.cam.move(glm::normalize(move) * speed);
+            if (glm::length(move) > 1e-6f)
+                st.cam.move(glm::normalize(move) * speed);
 
             if (in.isMouseButtonDown(Mouse::Button::Right)) {
                 const float s = 0.02f;
@@ -169,35 +160,44 @@ int main() {
             }
             if (in.scrollDelta() != 0.0)
                 st.cam.orbit(0.f, 0.f, -static_cast<float>(in.scrollDelta()) * 0.5f);
-			if (in.isKeyPressed(Key::Code::Space)) {
-				st.water->reset(st.mode);
-				std::printf("[reset] Simulación reiniciada con la tecla Espacio\n");
-			}
         });
 
         env.setRender([&](WWindow& w) {
             int rw, rh;
             if (w.consumeResize(rw, rh)) st.renderer.setViewport(rw, rh);
-            else                          st.renderer.setViewport(w.framebufferWidth(), w.framebufferHeight());
+            else                          st.renderer.setViewport(w.framebufferWidth(),
+                                                                  w.framebufferHeight());
 
             st.renderer.setClearColor(0.05f, 0.05f, 0.10f, 1.f);
             st.renderer.clear(true, true, false);
 
             glm::mat4 vp = st.cam.projection(w.aspect()) * st.cam.view();
 
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            glDepthMask(GL_FALSE);
-
-            // st.water->render(*st.shader, vp);
-
-			st.marchingCubes->generateMesh();
-			static int dbg = 0;
-			if (++dbg % 60 == 0)
-				std::printf("[MC] vertexCount = %u\n", st.marchingCubes->vertexCount());
-			st.marchingCubes->render(vp);
+            // ── H-03: opaque mesh pass ─────────────────────────────────
+            // No blending, depth test on, depth write on. The mesh is
+            // opaque; writing to the depth buffer lets the GPU discard
+            // fragments behind the front surface deterministically.
+            st.renderer.blend(true);
+            st.renderer.depthTest(true);
             glDepthMask(GL_TRUE);
-            glDisable(GL_BLEND);
+
+            st.marchingCubes->generateMesh();
+
+            // static int dbg = 0;
+            // if (++dbg % 60 == 0)
+            //     std::printf("[MC] vertexCount = %u\n", st.marchingCubes->vertexCount());
+
+            st.marchingCubes->render(vp);
+
+            // ── Optional: points on top (debug only) ───────────────────
+            if (RENDER_POINTS) {
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                glDepthMask(GL_FALSE);
+                st.water->render(*st.pointShader, vp);
+                glDepthMask(GL_TRUE);
+                glDisable(GL_BLEND);
+            }
         });
 
         env.run();

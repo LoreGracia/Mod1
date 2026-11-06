@@ -73,11 +73,12 @@ private:
     glm::vec3  m_boundsMax{1.f};
     glm::ivec3 m_gridSize{32, 32, 32};
     int        m_resolution = 32;
-    float      m_isoLevel   = 0.5f;
+    float      m_isoLevel   = 0.1f;
 
     // ── Estado de los buffers ───────────────────────────────────
-    GLuint m_maxParticles      = 0;   // capacidad actual del particle SSBO
-    GLuint m_maxVertices       = 0;   // capacidad del vertex SSBO (grid.x*grid.y*grid.z*15)
-    GLuint m_cachedVertexCount = 0;   // leído de la GPU tras cada dispatch
-    bool   m_initialized       = false;
+    GLuint m_maxParticles		= 0;   // capacidad actual del particle SSBO
+    GLuint m_maxVertices		= 0;   // capacidad del vertex SSBO (grid.x*grid.y*grid.z*15)
+    GLuint m_cachedVertexCount	= 0;   // leído de la GPU tras cada dispatch
+	GLuint m_particleCount		= 0;
+    bool   m_initialized		= false;
 };

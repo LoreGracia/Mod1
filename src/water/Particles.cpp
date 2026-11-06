@@ -233,13 +233,13 @@ void Particles::update(float dt)
     }
 
     // Debug: cada 30 frames
-    if (++m_debugCounter % 30 == 0) {
-        float avg = 0.f;
-        for (const auto& p : m_particles) avg += p.density;
-        avg /= static_cast<float>(m_particles.size());
-        std::printf("[sph] avg density = %.1f  (rest = %.1f)\n",
-                    avg, m_cfg.restDensity);
-    }
+    // if (++m_debugCounter % 30 == 0) {
+    //     float avg = 0.f;
+    //     for (const auto& p : m_particles) avg += p.density;
+    //     avg /= static_cast<float>(m_particles.size());
+    //     std::printf("[sph] avg density = %.1f  (rest = %.1f)\n",
+    //                 avg, m_cfg.restDensity);
+    // }
 }
 
 // ── Spawn ───────────────────────────────────────────────────────────
