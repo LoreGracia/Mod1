@@ -17,7 +17,7 @@ public:
 		int			width = 800, height = 600;
 		int			x = 0, y = 0;
 		WWindow*	shareContext = nullptr;
-		int			glMajor = 3, glMinor = 3;
+		int			glMajor = 4, glMinor = 6;
 		bool		coreProfile = true;
 		bool		resizable	= true;
 		bool		visible		= true;

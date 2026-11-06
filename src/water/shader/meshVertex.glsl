@@ -1,10 +1,8 @@
-#version 430 core
-
-// El VAO "vacío" asocia location 0 al vertex SSBO
-layout(location = 0) in vec4 aPos;
-
+#version 330 core
+layout(location=0) in vec3 aPos;
 uniform mat4 uViewProj;
-
-void main() {
-    gl_Position = uViewProj * aPos;
+out vec3 vColor;
+void main(){
+  vColor = aPos * 0.5 + 0.5;
+  gl_Position = uViewProj * vec4(aPos, 1.0);
 }
