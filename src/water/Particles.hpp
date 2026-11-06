@@ -54,6 +54,7 @@ class Particles {
 		void setTerrainHeight(HeightFn fn) { m_heightFn = std::move(fn); }
 
 		size_t count() const { return m_particles.size(); }
+		void  updateKernelCoefficients();
 
 	private:
 		// ── Física ──────────────────────────────────────────────────────
@@ -80,6 +81,9 @@ class Particles {
 		Mesh					m_mesh;
 		HeightFn				m_heightFn;
 		int						m_debugCounter = 0;
+		float					m_poly6Coeff = 0.f;
+		float					m_spikyCoeff = 0.f;
+		float					m_viscCoeff  = 0.f;
 
 		// Spatial hash: cell hash -> índices de partículas en esa celda
 		std::unordered_map<int64_t, std::vector<size_t>> m_hash;

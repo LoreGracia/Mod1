@@ -13,32 +13,39 @@ constexpr float PI = 3.14159265358979323846f;
 // ── Kernels SPH ─────────────────────────────────────────────────────
 
 // Poly6: densidad. W(r) = 315/(64π h⁹) (h² - r²)³
-float kernelPoly6(float r2, float h, float h2)
+float kernelPoly6(float r2, float h2, float coeff)
 {
     if (r2 >= h2) return 0.f;
     float diff = h2 - r2;
-    return 315.f / (64.f * PI * std::pow(h, 9.f)) * diff * diff * diff;
+    return coeff * diff * diff * diff;
 }
 
 // Spiky gradient magnitude. F(r) = -45/(π h⁶) (h - r)²
-float kernelSpikyGrad(float r, float h)
+float kernelSpikyGrad(float r, float h, float coeff)
 {
     if (r >= h || r < 1e-6f) return 0.f;
     float diff = h - r;
-    return -45.f / (PI * std::pow(h, 6.f)) * diff * diff;
+    return coeff * diff * diff;
 }
 
 // Laplacian (viscosidad). ∇²W(r) = 45/(π h⁶) (h - r)
-float kernelLaplacian(float r, float h)
+float kernelLaplacian(float r, float h, float coeff)
 {
     if (r >= h) return 0.f;
-    return 45.f / (PI * std::pow(h, 6.f)) * (h - r);
+    return coeff * (h - r);
 }
 
 } // namespace
 
 Particles::Particles() = default;
 Particles::~Particles() = default;
+
+void Particles::updateKernelCoefficients() {
+    const float h = m_cfg.h;
+    m_poly6Coeff = 315.f / (64.f * PI * std::pow(h, 9.f));
+    m_spikyCoeff = -45.f / (PI * std::pow(h, 6.f));
+    m_viscCoeff  =  45.f / (PI * std::pow(h, 6.f));
+}
 
 // ── Spatial hashing ─────────────────────────────────────────────────
 
@@ -57,7 +64,8 @@ int64_t Particles::hashCell(const glm::ivec3& c) const
 
 void Particles::buildHash()
 {
-    m_hash.clear();
+	for (auto& kv : m_hash)
+		kv.second.clear();
     m_hash.reserve(m_particles.size() * 2);
     for (size_t i = 0; i < m_particles.size(); ++i)
         m_hash[hashCell(cellOf(m_particles[i].position))].push_back(i);
@@ -95,7 +103,7 @@ void Particles::stepSPH(float dt)
         float density = 0.f;
         forEachNeighbor(i, [&](size_t j) {
             const glm::vec3 d = pi.position - m_particles[j].position;
-            density += m_cfg.particleMass * kernelPoly6(glm::dot(d, d), h, h2);
+            density += m_cfg.particleMass * kernelPoly6(glm::dot(d, d), h2, m_poly6Coeff);
         });
         pi.density = std::max(density, m_cfg.restDensity * 0.1f);
         
@@ -104,7 +112,7 @@ void Particles::stepSPH(float dt)
         
         // CLAVE: Evitar inestabilidad de tracción (Tensile Instability).
         // Permitimos una presión negativa MUY leve para cohesión, pero no más.
-        float minPressure = -0.005f * m_cfg.stiffness; 
+        float minPressure = -0.001f * m_cfg.stiffness; 
         pi.pressure = std::max(pi.pressure, minPressure);
 		// pi.pressure = std::max(pi.pressure, 0.f);
         
@@ -124,18 +132,18 @@ void Particles::stepSPH(float dt)
             glm::vec3 dir = d / r;
 
             float pTerm = (pi.pressure + pj.pressure) / (pi.density * pj.density);
-            fPress -= dir * (pTerm * kernelSpikyGrad(r, h));
+            fPress -= dir * (pTerm * kernelSpikyGrad(r, h, m_spikyCoeff));
 
-            fVisc += (pj.velocity - pi.velocity) *
-                     (m_cfg.viscosity * kernelLaplacian(r, h) / pj.density);
+			fVisc += (pj.velocity - pi.velocity) *
+					(m_cfg.viscosity * kernelLaplacian(r, h, m_viscCoeff) / pj.density);
         });
         pi.force += fPress + fVisc;
     }
-    (void)dt;
+    // (void)dt;
 
-	//     // 3. Viscosidad XSPH (Suavizado de velocidad para eliminar el "jitter")
-    // // Esto promedia la velocidad de cada partícula con sus vecinas.
-    // const float xsph_epsilon = 0.4f; 
+	// 3. Viscosidad XSPH (Suavizado de velocidad para eliminar el "jitter")
+    // Esto promedia la velocidad de cada partícula con sus vecinas.
+    // const float xsph_epsilon = 0.001f; 
     // for (size_t i = 0; i < n; ++i) {
     //     Particle& pi = m_particles[i];
     //     glm::vec3 vDelta{0.f};
@@ -145,28 +153,20 @@ void Particles::stepSPH(float dt)
     //         float r2 = glm::dot(d, d);
     //         if (r2 < h2) {
     //             // Usamos un kernel de densidad normalizado
-    //             vDelta += (pj.velocity - pi.velocity) * kernelPoly6(r2, h, h2);
+    //             vDelta += (pj.velocity - pi.velocity) * kernelPoly6(r2, h2, m_poly6Coeff);
     //         }
     //     });
     //     // Aplicamos un porcentaje del cambio de velocidad
     //     pi.velocity += vDelta * xsph_epsilon;
     // }
-    // (void)dt;
+    (void)dt;
 }
-// void Particles::integrate(float dt)
-// {
-//     for (auto& p : m_particles) {
-//         p.velocity += p.force * dt;      // Euler semi-implícito
-//         p.velocity *= m_cfg.damping;
-//         p.position += p.velocity * dt;
-//         p.age      += dt;
-//     }
-// }
+
 void Particles::integrate(float dt)
 {
     for (auto& p : m_particles) {
         p.velocity += p.force * dt;      // Euler semi-implícito
-        p.velocity *= m_cfg.damping;
+        // p.velocity *= m_cfg.damping;
 
         // ── LÍMITE DE VELOCIDAD (Evita que exploten y desaparezcan) ──
         float speed = glm::length(p.velocity);
@@ -214,15 +214,16 @@ void Particles::update(float dt)
 
 	if (dt > 0.033f)
 		dt = 0.033f; 
-	buildHash();
 
     const float subDt = dt / static_cast<float>(m_cfg.substeps);
     for (int s = 0; s < m_cfg.substeps; ++s) {
+		buildHash();
         stepSPH(subDt);
         integrate(subDt);
         collide();
     }
-
+	for (auto& p : m_particles)
+		p.velocity *= m_cfg.damping;
     // Buffers para GPU
     for (size_t i = 0; i < m_particles.size(); ++i) {
         m_positions[i * 3 + 0] = m_particles[i].position.x;
@@ -279,11 +280,17 @@ void Particles::spawnOne(Particle& p, Mode mode, bool initial)
 
 void Particles::spawnAll(Mode mode)
 {
-    m_particles.resize(m_positions.size() / 3);
-    for (auto& p : m_particles)
-        spawnOne(p, mode, /*initial=*/true);
+	m_particles.resize(m_positions.size() / 3);
+	for (auto& p : m_particles)
+		spawnOne(p, mode, /*initial=*/true);
 
-    m_densities.assign(m_particles.size(), m_cfg.restDensity);
+	m_densities.assign(m_particles.size(), m_cfg.restDensity);
+
+	for (size_t i = 0; i < m_particles.size(); ++i) {
+		m_positions[i * 3 + 0] = m_particles[i].position.x;
+		m_positions[i * 3 + 1] = m_particles[i].position.y;
+		m_positions[i * 3 + 2] = m_particles[i].position.z;
+	}
 }
 
 // ── Init / Reset ────────────────────────────────────────────────────
@@ -302,6 +309,7 @@ void Particles::init(size_t count, Mode mode, const Config& cfg)
     m_particles.reserve(count);
     m_positions.assign(count * 3, 0.f);
     m_densities.assign(count, m_cfg.restDensity);
+	updateKernelCoefficients();
 
     spawnAll(mode);
     m_mesh.uploadPoints(m_positions, m_densities);
@@ -310,7 +318,9 @@ void Particles::init(size_t count, Mode mode, const Config& cfg)
 void Particles::reset(Mode mode)
 {
     spawnAll(mode);
+	updateKernelCoefficients();
     m_mesh.updatePoints(m_positions, m_densities);
+	m_debugCounter = 0;
 }
 
 // ── GPU ─────────────────────────────────────────────────────────────
