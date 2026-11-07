@@ -212,6 +212,7 @@ void Particles::recycleRain()
     const float ground = m_cfg.boundsMin.y;
 
     for (auto& p : m_particles) {
+        if (!p.rainDrop) continue;
         const float g = m_heightFn ? m_heightFn(p.position.x, p.position.z)
                                    : ground;
         if (p.position.y <= g + 0.05f)
@@ -236,13 +237,38 @@ void Particles::update(float dt)
         if (m_mode == Mode::Rain) recycleRain();
     }
 
-    // Buffers para GPU
+    // Buffers para GPU + clasificación del agua híbrida.
+    // En Rain: gotas rápidas o en la banda superior -> solo puntos.
+    // Agua lenta (charco) -> splatWeight = 1 -> Marching Cubes.
+    const bool rain = (m_mode == Mode::Rain);
+    const float airY = m_cfg.boundsMax.y - m_cfg.rainAirBand;
+    m_fallCount = 0;
+
     for (size_t i = 0; i < m_particles.size(); ++i) {
-        m_positions[i * 3 + 0] = m_particles[i].position.x;
-        m_positions[i * 3 + 1] = m_particles[i].position.y;
-        m_positions[i * 3 + 2] = m_particles[i].position.z;
-        m_densities[i]         = m_particles[i].density;
+        Particle& p = m_particles[i];
+
+        const bool airborne = rain &&
+            (p.rainDrop ||
+             glm::length(p.velocity) > m_cfg.rainSettleSpeed ||
+             p.position.y > airY);
+        p.splatWeight = airborne ? 0.f : 1.f;
+
+        m_positions[i * 3 + 0] = p.position.x;
+        m_positions[i * 3 + 1] = p.position.y;
+        m_positions[i * 3 + 2] = p.position.z;
+        m_densities[i]         = p.density;
+
+        if (airborne) {
+            const size_t k = m_fallCount++;
+            m_fallPositions[k * 3 + 0] = p.position.x;
+            m_fallPositions[k * 3 + 1] = p.position.y;
+            m_fallPositions[k * 3 + 2] = p.position.z;
+            m_fallDensities[k]         = p.density;
+        }
     }
+
+    if (rain)
+        m_fallMesh.updatePoints(m_fallPositions, m_fallDensities);
 
     // Debug: cada 30 frames
     if (++m_debugCounter % 30 == 0) {
@@ -284,23 +310,33 @@ void Particles::spawnOne(Particle& p, Mode mode, bool initial)
             if (initial) {
                 const float span = m_cfg.boundsMax.y - ground;
                 p.position = {x, ground + 0.1f + u01(rng) * std::max(span - 0.2f, 0.f), z};
-                p.velocity = {0.f, -0.5f - u01(rng) * 1.5f, 0.f};
+                p.velocity = {0.f, -3.0f - u01(rng) * 2.0f, 0.f};
             } else {
                 p.position = {x, m_cfg.boundsMax.y - u01(rng) * 0.15f, z};
-                p.velocity = {0.f, -2.0f - u01(rng) * 1.5f, 0.f};
+                p.velocity = {0.f, -3.0f - u01(rng) * 1.5f, 0.f};
             }
             break;
     }
     p.age      = initial ? u01(rng) * 2.f : 0.f;
     p.density  = m_cfg.restDensity;
     p.pressure = 0.f;
+    p.splatWeight = 1.f;
 }
 
 void Particles::spawnAll(Mode mode)
 {
+    m_fallCount = 0;
     m_particles.resize(m_positions.size() / 3);
-    for (auto& p : m_particles)
-        spawnOne(p, mode, /*initial=*/true);
+
+    const size_t rainDrops = (mode == Mode::Rain)
+        ? static_cast<size_t>(static_cast<float>(m_particles.size()) *
+                              m_cfg.rainDropFraction)
+        : 0;
+
+    for (size_t i = 0; i < m_particles.size(); ++i) {
+        spawnOne(m_particles[i], mode, /*initial=*/true);
+        m_particles[i].rainDrop = (i < rainDrops);
+    }
 
     m_densities.assign(m_particles.size(), m_cfg.restDensity);
 }
@@ -322,9 +358,13 @@ void Particles::init(size_t count, Mode mode, const Config& cfg)
     m_particles.reserve(count);
     m_positions.assign(count * 3, 0.f);
     m_densities.assign(count, m_cfg.restDensity);
+    m_fallPositions.assign(count * 3, 0.f);
+    m_fallDensities.assign(count, 0.f);
+    m_fallCount = 0;
 
     spawnAll(mode);
     m_mesh.uploadPoints(m_positions, m_densities);
+    m_fallMesh.uploadPoints(m_fallPositions, m_fallDensities);
 }
 
 void Particles::reset(Mode mode)
@@ -352,4 +392,20 @@ void Particles::render(Shader& shader, const glm::mat4& viewProj)
     shader.setFloat("uDensityMin", m_cfg.restDensity * 0.9f);
     shader.setFloat("uDensityMax", m_cfg.restDensity * 1.3f);
     m_mesh.drawPoints();
+}
+
+void Particles::renderRainDrops(Shader& shader, const glm::mat4& viewProj)
+{
+    if (m_fallCount == 0)
+        return;
+
+    shader.use();
+    shader.setMat4 ("uViewProj",   viewProj);
+    shader.setFloat("uPointSize",  m_cfg.rainPointSize);
+    shader.setVec3 ("uColorLow",   m_cfg.rainColor);
+    shader.setVec3 ("uColorHigh",  m_cfg.rainColor);
+    shader.setFloat("uAlpha",      m_cfg.rainAlpha);
+    shader.setFloat("uDensityMin", m_cfg.restDensity * 0.9f);
+    shader.setFloat("uDensityMax", m_cfg.restDensity * 1.3f);
+    m_fallMesh.drawPoints(static_cast<GLsizei>(m_fallCount));
 }

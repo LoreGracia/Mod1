@@ -26,6 +26,8 @@ public:
 	void updatePoints(const std::vector<float>& positions,
 					const std::vector<float>& densities = {});
 	void drawPoints() const;
+	// Dibuja solo los primeros `count` puntos del buffer actual.
+	void drawPoints(GLsizei count) const;
 
 	static Mesh triangle();
 	static Mesh cube();

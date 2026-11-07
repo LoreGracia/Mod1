@@ -50,6 +50,12 @@ void main() {
 
     if (i >= uint(uParticleCount)) return;
 
+    // w = splatWeight (0 = gota en caída, 1 = agua asentada).
+    // El CPU clasifica por velocidad/Y y evita que las gotas formen
+    // metaballs flotantes; esas gotas se dibujan como GL_POINTS.
+    float weight = particles[i].w;
+    if (weight <= 0.0) return;
+
     vec3  cell    = (uGridMax - uGridMin) / vec3(uGridSize);
     float cellMax = max(cell.x, max(cell.y, cell.z));
     int   R       = int(ceil(uParticleRadius / cellMax));
@@ -73,7 +79,7 @@ void main() {
         if (d2 >= r2) continue;
 
         float f = 1.0 - d2 / r2;
-        float density = f * f * f;
+        float density = f * f * f * weight;
         imageAtomicAdd(uDensity, v, uint(density * uDensityScale));
     }
 }

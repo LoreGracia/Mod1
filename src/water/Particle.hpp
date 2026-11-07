@@ -9,4 +9,8 @@ struct Particle
 	float	density		= 0.f;
 	float	pressure	= 0.f;
 	float	age			= 0.f;
+	// 1 = aporta densidad al Marching Cubes; 0 = gota en el aire (solo puntos).
+	float	splatWeight	= 1.f;
+	// Subconjunto que se recicla continuamente para mantener la lluvia.
+	bool	rainDrop	= false;
 };

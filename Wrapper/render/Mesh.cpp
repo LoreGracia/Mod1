@@ -185,6 +185,17 @@ void Mesh::drawPoints() const
 	glBindVertexArray(0);
 }
 
+void Mesh::drawPoints(GLsizei count) const
+{
+	if (!m_vao || count <= 0 || m_vertexCount == 0)
+		return;
+	if (count > m_vertexCount)
+		count = m_vertexCount;
+	glBindVertexArray(m_vao);
+	glDrawArrays(GL_POINTS, 0, count);
+	glBindVertexArray(0);
+}
+
 Mesh Mesh::triangle()
 {
 	Mesh m;

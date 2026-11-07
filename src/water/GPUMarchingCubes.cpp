@@ -170,11 +170,11 @@ void GPUMarchingCubes::uploadParticles(const std::vector<Particle>& particles) {
                      GL_DYNAMIC_DRAW);
     }
 
-    // Empaquetar position como vec4 (xyz + w=1.0). El shader lo declara
-    // como `vec4 particles[]` para respetar el alignment natural de vec4.
+    // Empaquetar position como vec4 (xyz + w=splatWeight). El shader lo
+    // declara como `vec4 particles[]` para respetar el alignment de vec4.
     std::vector<glm::vec4> staging(particles.size());
     for (size_t i = 0; i < particles.size(); ++i) {
-        staging[i] = glm::vec4(particles[i].position, 1.0f);
+        staging[i] = glm::vec4(particles[i].position, particles[i].splatWeight);
     }
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_particleSSBO);

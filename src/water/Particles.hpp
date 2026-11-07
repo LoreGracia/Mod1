@@ -34,6 +34,14 @@ class Particles {
 			glm::vec3 colorLow {0.2f, 0.6f, 1.0f};
 			glm::vec3 colorHigh{0.05f, 0.1f, 0.5f};
 			float     alpha    = 0.7f;
+
+			// Lluvia híbrida (puntos en el aire + malla en el charco)
+			float     rainDropFraction = 0.15f; // % reciclado para lluvia continua
+			float     rainSettleSpeed = 2.0f;  // |v| menor => ya es charco
+			float     rainAirBand     = 0.25f; // banda superior siempre "en el aire"
+			float     rainPointSize   = 6.0f;
+			float     rainAlpha       = 0.75f;
+			glm::vec3 rainColor{0.55f, 0.80f, 1.0f};
 		};
 
 		Particles();
@@ -44,6 +52,7 @@ class Particles {
 		void update(float dt);
 		void uploadToGPU();
 		void render(Shader& shader, const glm::mat4& viewProj);
+		void renderRainDrops(Shader& shader, const glm::mat4& viewProj);
 		const std::vector<Particle>& getParticles() const { return m_particles; }
 
 		void reset(Mode mode);
@@ -79,7 +88,11 @@ class Particles {
 		std::vector<Particle>	m_particles;
 		std::vector<float>		m_positions;   // flat vec3
 		std::vector<float>		m_densities;   // flat float
+		std::vector<float>		m_fallPositions; // gotas en el aire (subconjunto)
+		std::vector<float>		m_fallDensities;
+		size_t					m_fallCount = 0;
 		Mesh					m_mesh;
+		Mesh					m_fallMesh;
 		HeightFn				m_heightFn;
 		int						m_debugCounter = 0;
 

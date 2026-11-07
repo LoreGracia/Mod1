@@ -53,35 +53,9 @@ int main() {
 
         env.setInit([&](WWindow& w) {
             st.shader = std::make_shared<Shader>();
-            if (!st.shader->loadFromSource(
-                "#version 330 core\n"
-                "layout(location=0) in vec3 aPos;\n"
-                "layout(location=1) in float aDensity;\n"
-                "uniform mat4 uViewProj;\n"
-                "uniform float uPointSize, uDensityMin, uDensityMax;\n"
-                "out float vDensity;\n"
-                "void main(){\n"
-                "  vDensity = aDensity;\n"
-                "  gl_Position = uViewProj * vec4(aPos, 1.0);\n"
-                "  float t = clamp((aDensity - uDensityMin) /\n"
-                "                  max(uDensityMax - uDensityMin, 0.001), 0.0, 1.0);\n"
-                "  gl_PointSize = uPointSize * (0.9 + 2.0 * t);\n"
-                "}\n",
-                "#version 330 core\n"
-                "in float vDensity;\n"
-                "uniform vec3 uColorLow, uColorHigh;\n"
-                "uniform float uDensityMin, uDensityMax, uAlpha;\n"
-                "out vec4 FragColor;\n"
-                "void main(){\n"
-                "  vec2 uv = gl_PointCoord * 2.0 - 1.0;\n"
-                "  float r2 = dot(uv, uv);\n"
-                "  if (r2 > 1.0) discard;\n"
-                "  float edge = smoothstep(1.0, 0.8, r2);\n"
-                "  float t = clamp((vDensity - uDensityMin) /\n"
-                "                  max(uDensityMax - uDensityMin, 0.001), 0.0, 1.0);\n"
-				"  float finalAlpha = mix(0.4, 1.0, t);\n"
-                "  FragColor = vec4(mix(uColorLow, uColorHigh, t), uAlpha * edge);\n"
-                "}\n"))
+            if (!st.shader->loadFromFile(
+                    "src/water/shader/waterVertex.glsl",
+                    "src/water/shader/waterFrag.frag"))
             {
                 std::fprintf(stderr, "shader failed\n");
                 return;
@@ -147,7 +121,6 @@ int main() {
         });
 
         env.setUpdate([&](WWindow& w, float dt) {
-			st.marchingCubes->uploadParticles(st.water->getParticles());
             Input& in = w.input();
             if (in.isKeyPressed(Key::Code::Escape)) w.requestClose();
 
@@ -160,6 +133,7 @@ int main() {
             // Física
             st.water->update(dt);
             st.water->uploadToGPU();
+            st.marchingCubes->uploadParticles(st.water->getParticles());
             st.time += dt;
 
             // Cámara
@@ -204,13 +178,20 @@ int main() {
             // st.water->render(*st.shader, vp);
 
 			st.marchingCubes->generateMesh();
-			static bool dbgCount = std::getenv("MC_DEBUG_COUNT") != nullptr;
-			if (dbgCount) {
-				dbgCount = false;
-				std::printf("[MC] debug vertexCount = %u\n",
-				            st.marchingCubes->debugReadDrawCount());
+			if (const char* v = std::getenv("MC_DEBUG_COUNT")) {
+				static int dbgFrame = 0;
+				int every = std::atoi(v);
+				if (every <= 0) every = 1;
+				if (++dbgFrame % (every * 30) == 0)
+					std::printf("[MC] debug vertexCount = %u\n",
+					            st.marchingCubes->debugReadDrawCount());
 			}
 			st.marchingCubes->render(vp, st.cam.position(), st.time);
+
+			// Gotas en el aire: solo puntos (el charco ya salió del MC).
+			if (st.mode == Particles::Mode::Rain)
+				st.water->renderRainDrops(*st.shader, vp);
+
             glDepthMask(GL_TRUE);
             glDisable(GL_BLEND);
         });
