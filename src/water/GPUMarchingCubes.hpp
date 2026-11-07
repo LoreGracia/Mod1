@@ -24,6 +24,7 @@ public:
     bool init(const glm::vec3& boundsMin,
               const glm::vec3& boundsMax,
               int resolution,
+              const std::string& splatPath,     // density_splat.comp
               const std::string& computePath,   // marching_cubes.comp
               const std::string& vertPath,      // meshVertex.glsl
               const std::string& fragPath);     // meshFrag.frag
@@ -44,10 +45,12 @@ public:
     void setBounds(const glm::vec3& lo, const glm::vec3& hi);
 
     // Accesores de introspección (debug / UI).
-    GLuint vertexCount()   const { return m_cachedVertexCount; }
     int    resolution()    const { return m_resolution; }
     float  isoLevel()      const { return m_isoLevel; }
     bool   isInitialized() const { return m_initialized; }
+
+    // Solo para depuración: fuerza un readback. NO usar en el bucle de render.
+    GLuint debugReadDrawCount() const;
 
     // Libera todos los recursos GL. Idempotente.
     // Se llama desde el destructor; puedes llamarlo antes si quieres.
@@ -55,16 +58,17 @@ public:
 
 private:
     // Sólo usados internamente por init() y generateMesh().
-    void   createBuffers();
-    GLuint readVertexCounter() const;
+    void createBuffers();
 
     // ── GPU buffers ─────────────────────────────────────────────
-    GLuint m_particleSSBO = 0;   // binding 0 del compute: vec4 por partícula
+    GLuint m_particleSSBO = 0;   // binding 0 del splat: vec4 por partícula
     GLuint m_vertexSSBO   = 0;   // binding 1: vec4 por vértice de salida
-    GLuint m_counterSSBO  = 0;   // binding 2: 1 uint con atomicAdd
+    GLuint m_drawCmdSSBO  = 0;   // binding 2: DrawArraysIndirectCommand
     GLuint m_emptyVAO     = 0;   // VAO sin VBO; lee del m_vertexSSBO
+    GLuint m_densityTex   = 0;   // textura 3D GL_R32UI de densidad
 
     // ── Shaders ─────────────────────────────────────────────────
+    Shader m_splatShader;        // density_splat.comp
     Shader m_computeShader;      // marching_cubes.comp
     Shader m_meshShader;         // meshVertex + meshFrag
 
@@ -72,12 +76,13 @@ private:
     glm::vec3  m_boundsMin{0.f};
     glm::vec3  m_boundsMax{1.f};
     glm::ivec3 m_gridSize{32, 32, 32};
+    glm::ivec3 m_densitySize{33, 33, 33}; // gridSize + 1 para las esquinas
     int        m_resolution = 32;
     float      m_isoLevel   = 0.5f;
 
     // ── Estado de los buffers ───────────────────────────────────
-    GLuint m_maxParticles      = 0;   // capacidad actual del particle SSBO
-    GLuint m_maxVertices       = 0;   // capacidad del vertex SSBO (grid.x*grid.y*grid.z*15)
-    GLuint m_cachedVertexCount = 0;   // leído de la GPU tras cada dispatch
-    bool   m_initialized       = false;
+    GLuint m_maxParticles = 0;        // capacidad actual del particle SSBO
+    GLuint m_maxVertices  = 0;        // capacidad del vertex SSBO (grid.x*grid.y*grid.z*15)
+    GLuint m_particleCount = 0;       // partículas válidas en el SSBO
+    bool   m_initialized  = false;
 };

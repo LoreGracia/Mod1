@@ -1,0 +1,79 @@
+#version 430 core
+
+// ─────────────────────────────────────────────────────────────────────
+// Pase 1: splatting de densidad a una textura 3D.
+//
+// Cada partícula reparte su contribución (kernel de Wyvill) sobre los
+// puntos de la rejilla que caen dentro de su radio de influencia. El
+// Marching Cubes lee después esa textura y deja de recorrer partículas.
+//
+// Formato GL_R32UI + imageAtomicAdd (punto fijo) porque el atomic add
+// de float en imágenes no es core hasta OpenGL 4.6.
+// ─────────────────────────────────────────────────────────────────────
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+// ─── Textura 3D de densidad (binding de imagen, no SSBO) ─────────────
+layout(r32ui, binding = 0) uniform uimage3D uDensity;
+
+// ─── SSBOs ───────────────────────────────────────────────────────────
+layout(std430, binding = 0) buffer ParticleBuffer {
+    vec4 particles[];
+};
+
+layout(std430, binding = 2) buffer DrawCmdBuffer {
+    uint vertexCount;
+    uint instanceCount;
+    uint firstVertex;
+    uint baseInstance;
+} drawCmd;
+
+// ─── Uniforms ────────────────────────────────────────────────────────
+uniform vec3  uGridMin;
+uniform vec3  uGridMax;
+uniform ivec3 uGridSize;       // número de vóxeles (la textura mide N+1)
+uniform float uParticleRadius;
+uniform float uDensityScale;   // densidad * escala -> uint
+uniform int   uParticleCount;  // partículas válidas (no la capacidad del SSBO)
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+
+    // El primer invocation reinicia el comando de dibujo indirecto.
+    // Se hace en GPU para no introducir un readback ni un upload síncrono.
+    if (i == 0u) {
+        drawCmd.vertexCount  = 0u;
+        drawCmd.instanceCount = 1u;
+        drawCmd.firstVertex  = 0u;
+        drawCmd.baseInstance = 0u;
+    }
+
+    if (i >= uint(uParticleCount)) return;
+
+    vec3  cell    = (uGridMax - uGridMin) / vec3(uGridSize);
+    float cellMax = max(cell.x, max(cell.y, cell.z));
+    int   R       = int(ceil(uParticleRadius / cellMax));
+
+    vec3  p    = particles[i].xyz;
+    vec3  g    = (p - uGridMin) / cell;
+    ivec3 base = ivec3(round(g));
+
+    float r2 = uParticleRadius * uParticleRadius;
+    ivec3 texSize = uGridSize + ivec3(1);
+
+    for (int dz = -R; dz <= R; ++dz)
+    for (int dy = -R; dy <= R; ++dy)
+    for (int dx = -R; dx <= R; ++dx) {
+        ivec3 v = base + ivec3(dx, dy, dz);
+        if (any(lessThan(v, ivec3(0))) || any(greaterThanEqual(v, texSize)))
+            continue;
+
+        vec3  gp = uGridMin + vec3(v) * cell;
+        float d2 = dot(p - gp, p - gp);
+        if (d2 >= r2) continue;
+
+        float f = 1.0 - d2 / r2;
+        float density = f * f * f;
+        imageAtomicAdd(uDensity, v, uint(density * uDensityScale));
+    }
+}

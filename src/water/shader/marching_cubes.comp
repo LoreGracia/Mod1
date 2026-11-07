@@ -14,12 +14,24 @@ uniform vec3  uGridMin;
 uniform vec3  uGridMax;
 uniform ivec3 uGridSize;
 uniform float uIsoLevel;
-uniform float uParticleRadius;
+uniform float uDensityScale;
+
+// ─── Textura 3D de densidad generada por density_splat.comp ──────────
+// La textura mide (uGridSize + 1) en cada eje: sus texeles coinciden
+// exactamente con las esquinas de los vóxeles.
+layout(r32ui, binding = 0) uniform readonly uimage3D uDensity;
 
 // ─── SSBOs (bindings deben coincidir con GPUMarchingCubes.cpp) ──────
-layout(std430, binding = 0) buffer ParticleBuffer { vec4 particles[]; };
-layout(std430, binding = 1) buffer VertexBuffer   { vec4 vertices[];  };
-layout(std430, binding = 2) buffer CounterBuffer  { uint vertexCount; };
+layout(std430, binding = 1) buffer VertexBuffer { vec4 vertices[]; };
+
+// El mismo SSBO que reinicia density_splat.comp. El compute incrementa
+// vertexCount y el render lo usa como glDrawArraysIndirect.
+layout(std430, binding = 2) buffer DrawCmdBuffer {
+    uint vertexCount;
+    uint instanceCount;
+    uint firstVertex;
+    uint baseInstance;
+} drawCmd;
 
 // ─────────────────────────────────────────────────────────────────────
 // Tabla de aristas activas por caso (256 entradas)
@@ -325,21 +337,10 @@ const int triTable[256][16] = int[256][16](
 );
 
 // ─────────────────────────────────────────────────────────────────────
-// Función de densidad (Metaball con caída cúbica de Wyvill)
+// Lectura de densidad desde la textura 3D (punto fijo -> float)
 // ─────────────────────────────────────────────────────────────────────
-float densityAt(vec3 p) {
-    float total = 0.0;
-    int n = particles.length();
-    float r2 = uParticleRadius * uParticleRadius;
-    for (int i = 0; i < n; ++i) {
-        vec3 pp = particles[i].xyz;
-        float d2 = dot(p - pp, p - pp);
-        if (d2 < r2) {
-            float f = 1.0 - d2 / r2;
-            total += f * f * f;
-        }
-    }
-    return total;
+float densityAt(ivec3 idx) {
+    return float(imageLoad(uDensity, idx).r) / uDensityScale;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -376,9 +377,22 @@ void main() {
         base + vec3(0,1,1) * cell
     );
 
-    // Densidad en cada esquina
+    // Índices de textura de esas 8 esquinas. La textura mide N+1, así
+    // que voxel + offset siempre está dentro de [0, N].
+    ivec3 ci[8] = ivec3[8](
+        voxel + ivec3(0,0,0),
+        voxel + ivec3(1,0,0),
+        voxel + ivec3(1,1,0),
+        voxel + ivec3(0,1,0),
+        voxel + ivec3(0,0,1),
+        voxel + ivec3(1,0,1),
+        voxel + ivec3(1,1,1),
+        voxel + ivec3(0,1,1)
+    );
+
+    // Densidad en cada esquina (lectura de la textura 3D)
     float d[8];
-    for (int i = 0; i < 8; ++i) d[i] = densityAt(c[i]);
+    for (int i = 0; i < 8; ++i) d[i] = densityAt(ci[i]);
 
     // cubeIndex: bit i = 1 si la esquina i está DENTRO del agua
     // Usamos d >= isoLevel porque nuestro "sólido" es el agua (densidad alta).
@@ -405,9 +419,9 @@ void main() {
     if ((edges & 1024) != 0) ev[10] = vertexInterp(uIsoLevel, c[2], c[6], d[2], d[6]);
     if ((edges & 2048) != 0) ev[11] = vertexInterp(uIsoLevel, c[3], c[7], d[3], d[7]);
 
-    // Emitir triángulos con atomicAdd
+    // Emitir triángulos con atomicAdd sobre el comando indirecto
     for (int i = 0; triTable[cubeIndex][i] != -1; i += 3) {
-        uint dst = atomicAdd(vertexCount, 3u);
+        uint dst = atomicAdd(drawCmd.vertexCount, 3u);
         vertices[dst + 0] = vec4(ev[triTable[cubeIndex][i + 0]], 1.0);
         vertices[dst + 1] = vec4(ev[triTable[cubeIndex][i + 1]], 1.0);
         vertices[dst + 2] = vec4(ev[triTable[cubeIndex][i + 2]], 1.0);

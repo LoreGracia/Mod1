@@ -17,6 +17,7 @@
 #include <WWindow.hpp>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <glm.hpp>
 #include <gtc/type_ptr.hpp>
 #include <memory>
@@ -35,7 +36,7 @@ int main() {
         cfg.width       = 1000;
         cfg.height      = 700;
         cfg.glMajor     = 4;
-        cfg.glMinor     = 6;
+        cfg.glMinor     = 3;
         cfg.coreProfile = true;
         cfg.vsync       = true;
         env.addWindow(cfg);
@@ -111,6 +112,7 @@ int main() {
 				pcfg.boundsMin, 
 				pcfg.boundsMax, 
 				32, // Resolución baja para probar
+				"src/water/shader/density_splat.comp",
 				"src/water/shader/marching_cubes.comp",
 				"src/water/shader/meshVertex.glsl",
 				"src/water/shader/meshFrag.frag"
@@ -192,9 +194,12 @@ int main() {
             // st.water->render(*st.shader, vp);
 
 			st.marchingCubes->generateMesh();
-			static int dbg = 0;
-			if (++dbg % 60 == 0)
-				std::printf("[MC] vertexCount = %u\n", st.marchingCubes->vertexCount());
+			static bool dbgCount = std::getenv("MC_DEBUG_COUNT") != nullptr;
+			if (dbgCount) {
+				dbgCount = false;
+				std::printf("[MC] debug vertexCount = %u\n",
+				            st.marchingCubes->debugReadDrawCount());
+			}
 			st.marchingCubes->render(vp);
             glDepthMask(GL_TRUE);
             glDisable(GL_BLEND);
