@@ -207,6 +207,18 @@ void Particles::collide()
     }
 }
 
+void Particles::recycleRain()
+{
+    const float ground = m_cfg.boundsMin.y;
+
+    for (auto& p : m_particles) {
+        const float g = m_heightFn ? m_heightFn(p.position.x, p.position.z)
+                                   : ground;
+        if (p.position.y <= g + 0.05f)
+            spawnOne(p, Mode::Rain, /*initial=*/false);
+    }
+}
+
 void Particles::update(float dt)
 {
     if (m_particles.empty())
@@ -221,6 +233,7 @@ void Particles::update(float dt)
         stepSPH(subDt);
         integrate(subDt);
         collide();
+        if (m_mode == Mode::Rain) recycleRain();
     }
 
     // Buffers para GPU
@@ -268,8 +281,14 @@ void Particles::spawnOne(Particle& p, Mode mode, bool initial)
             p.velocity = {3.f + u01(rng) * 0.5f, 0.f, 0.f};
             break;
         case Mode::Rain:
-            p.position = {x, m_cfg.boundsMax.y - u01(rng) * 0.5f, z};
-            p.velocity = {0.f, -1.f, 0.f};
+            if (initial) {
+                const float span = m_cfg.boundsMax.y - ground;
+                p.position = {x, ground + 0.1f + u01(rng) * std::max(span - 0.2f, 0.f), z};
+                p.velocity = {0.f, -0.5f - u01(rng) * 1.5f, 0.f};
+            } else {
+                p.position = {x, m_cfg.boundsMax.y - u01(rng) * 0.15f, z};
+                p.velocity = {0.f, -2.0f - u01(rng) * 1.5f, 0.f};
+            }
             break;
     }
     p.age      = initial ? u01(rng) * 2.f : 0.f;
@@ -296,6 +315,7 @@ void Particles::init(size_t count, Mode mode)
 void Particles::init(size_t count, Mode mode, const Config& cfg)
 {
     m_cfg = cfg;
+    m_mode = mode;
     m_debugCounter = 0;
 
     m_particles.clear();
@@ -309,6 +329,7 @@ void Particles::init(size_t count, Mode mode, const Config& cfg)
 
 void Particles::reset(Mode mode)
 {
+    m_mode = mode;
     spawnAll(mode);
     m_mesh.updatePoints(m_positions, m_densities);
 }

@@ -5,6 +5,13 @@
 #include <cstdio>
 #include <vector>
 
+namespace {
+struct GPUVertex {
+    glm::vec4 position;
+    glm::vec4 normal;
+};
+} // namespace
+
 // ─────────────────────────────────────────────────────────────────────
 // Constructores / destructor
 // ─────────────────────────────────────────────────────────────────────
@@ -67,7 +74,7 @@ bool GPUMarchingCubes::init(const glm::vec3& boundsMin,
                  m_gridSize.x, m_gridSize.y, m_gridSize.z,
                  m_densitySize.x, m_densitySize.y, m_densitySize.z,
                  m_maxVertices,
-                 (m_maxVertices * sizeof(glm::vec4)) / (1024.0 * 1024.0));
+                 (m_maxVertices * sizeof(GPUVertex)) / (1024.0 * 1024.0));
     return true;
 }
 
@@ -95,7 +102,7 @@ void GPUMarchingCubes::createBuffers() {
     glGenBuffers(1, &m_vertexSSBO);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_vertexSSBO);
     glBufferData(GL_SHADER_STORAGE_BUFFER,
-                 static_cast<GLsizeiptr>(m_maxVertices) * sizeof(glm::vec4),
+                 static_cast<GLsizeiptr>(m_maxVertices) * sizeof(GPUVertex),
                  nullptr,
                  GL_DYNAMIC_DRAW);
 
@@ -126,8 +133,12 @@ void GPUMarchingCubes::createBuffers() {
     glGenVertexArrays(1, &m_emptyVAO);
     glBindVertexArray(m_emptyVAO);
     glBindBuffer(GL_ARRAY_BUFFER, m_vertexSSBO);
-    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(glm::vec4), (void*)0);
+    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(GPUVertex),
+                          reinterpret_cast<void*>(0));
     glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(GPUVertex),
+                          reinterpret_cast<void*>(sizeof(glm::vec4)));
+    glEnableVertexAttribArray(1);
     glBindVertexArray(0);
 
     // Limpieza de bindings
@@ -249,11 +260,21 @@ GLuint GPUMarchingCubes::debugReadDrawCount() const {
 // ─────────────────────────────────────────────────────────────────────
 // render: dibuja usando el comando generado en GPU (sin readback)
 // ─────────────────────────────────────────────────────────────────────
-void GPUMarchingCubes::render(const glm::mat4& viewProj) {
+void GPUMarchingCubes::render(const glm::mat4& viewProj,
+                              const glm::vec3& cameraPos,
+                              float time) {
     if (!m_initialized) return;
 
     m_meshShader.use();
-    m_meshShader.setMat4("uViewProj", viewProj);
+    m_meshShader.setMat4("uViewProj",  viewProj);
+    m_meshShader.setVec3("uCameraPos", cameraPos);
+    m_meshShader.setVec3("uSunDir",    glm::normalize(glm::vec3(0.55f, 1.0f, 0.35f)));
+    m_meshShader.setVec3("uSunColor",  glm::vec3(1.00f, 0.95f, 0.82f));
+    m_meshShader.setVec3("uWaterDeep", glm::vec3(0.015f, 0.10f, 0.28f));
+    m_meshShader.setVec3("uWaterShallow", glm::vec3(0.10f, 0.48f, 0.78f));
+    m_meshShader.setVec3("uBoundsMin", m_boundsMin);
+    m_meshShader.setVec3("uBoundsMax", m_boundsMax);
+    m_meshShader.setFloat("uTime", time);
 
     glBindVertexArray(m_emptyVAO);
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, m_drawCmdSSBO);

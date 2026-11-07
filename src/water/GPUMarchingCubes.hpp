@@ -36,9 +36,11 @@ public:
     // Reset del counter → bind SSBOs → uniforms → dispatch → barrier → readback.
     void generateMesh();
 
-    // Lee el contador y dibuja los triángulos si hay > 0.
+    // Lee el comando indirecto y dibuja los triángulos si hay > 0.
     // Debe llamarse después de generateMesh() en el mismo frame.
-    void render(const glm::mat4& viewProj);
+    void render(const glm::mat4& viewProj,
+                const glm::vec3& cameraPos,
+                float time);
 
     // Ajustes sin reasignar buffers.
     void setIsoLevel(float iso)               { m_isoLevel = iso; }

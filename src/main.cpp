@@ -46,8 +46,9 @@ int main() {
             Renderer renderer;
             std::shared_ptr<Shader>   shader;
             std::shared_ptr<Particles> water;
-			std::shared_ptr<GPUMarchingCubes> marchingCubes;
+            std::shared_ptr<GPUMarchingCubes> marchingCubes;
             Particles::Mode mode = Particles::Mode::UniformRise;
+            float time = 0.f;
         } st;
 
         env.setInit([&](WWindow& w) {
@@ -120,6 +121,14 @@ int main() {
 			if (!ok) {
 				std::fprintf(stderr, "Failed to init Marching Cubes\n");
 			}
+			if (const char* m = std::getenv("WATER_MODE")) {
+				switch (std::atoi(m)) {
+					case 1: st.mode = Particles::Mode::UniformRise; break;
+					case 2: st.mode = Particles::Mode::Wave;        break;
+					case 3: st.mode = Particles::Mode::Rain;        break;
+					default: break;
+				}
+			}
 			st.water->init(1000, st.mode, pcfg);
 
             // (Opcional) colisión con terreno:
@@ -151,6 +160,7 @@ int main() {
             // Física
             st.water->update(dt);
             st.water->uploadToGPU();
+            st.time += dt;
 
             // Cámara
             float speed = 3.f * dt;
@@ -200,7 +210,7 @@ int main() {
 				std::printf("[MC] debug vertexCount = %u\n",
 				            st.marchingCubes->debugReadDrawCount());
 			}
-			st.marchingCubes->render(vp);
+			st.marchingCubes->render(vp, st.cam.position(), st.time);
             glDepthMask(GL_TRUE);
             glDisable(GL_BLEND);
         });

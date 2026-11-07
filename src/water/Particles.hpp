@@ -71,9 +71,11 @@ class Particles {
 		// ── Spawn ──────────────────────────────────────────────────────
 		void spawnAll(Mode mode);
 		void spawnOne(Particle& p, Mode mode, bool initial);
+		void recycleRain();
 
 		// ── Estado ─────────────────────────────────────────────────────
 		Config					m_cfg;
+		Mode					m_mode = Mode::UniformRise;
 		std::vector<Particle>	m_particles;
 		std::vector<float>		m_positions;   // flat vec3
 		std::vector<float>		m_densities;   // flat float
