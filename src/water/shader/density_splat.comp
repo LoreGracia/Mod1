@@ -17,8 +17,16 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 layout(r32ui, binding = 0) uniform uimage3D uDensity;
 
 // ─── SSBOs ───────────────────────────────────────────────────────────
+// Cada partícula ocupa 2 vec4 (32 bytes):
+//   posWeight = (position.xyz, splatWeight)
+//   velAge    = (velocity.xyz, age)
+struct GPUParticle {
+    vec4 posWeight;
+    vec4 velAge;
+};
+
 layout(std430, binding = 0) buffer ParticleBuffer {
-    vec4 particles[];
+    GPUParticle particles[];
 };
 
 layout(std430, binding = 2) buffer DrawCmdBuffer {
@@ -35,6 +43,20 @@ uniform ivec3 uGridSize;       // número de vóxeles (la textura mide N+1)
 uniform float uParticleRadius;
 uniform float uDensityScale;   // densidad * escala -> uint
 uniform int   uParticleCount;  // partículas válidas (no la capacidad del SSBO)
+// Gotas que caen más rápido que esto NO aportan densidad (solo se dibujan
+// como GL_POINTS). Evita que la lluvia en el aire genere metaballs flotantes.
+uniform float uFallSpeedCutoff; // p.ej. -1.0
+
+// ── Fase 3.7: filtro estricto de agua acumulada + aplanado ───────────
+// Banda vertical (sobre uGridMin.y) donde se permite inyectar densidad.
+uniform float uSplatHeight;     // p.ej. 0.15
+// Techo absoluto: por encima de esto NUNCA se splatea, aunque esté quieta.
+uniform float uSplatMaxHeight;  // p.ej. 0.22
+// |velocity.y| <= esto => la partícula se considera asentada.
+uniform float uSettleSpeed;     // p.ej. 0.5
+// Compresión vertical del kernel (>1): las metaballs se fusionan en
+// horizontal y la superficie queda plana como una lámina.
+uniform float uSplatYScale;     // p.ej. 3.0
 
 void main() {
     uint i = gl_GlobalInvocationID.x;
@@ -53,14 +75,30 @@ void main() {
     // w = splatWeight (0 = gota en caída, 1 = agua asentada).
     // El CPU clasifica por velocidad/Y y evita que las gotas formen
     // metaballs flotantes; esas gotas se dibujan como GL_POINTS.
-    float weight = particles[i].w;
+    vec4  posWeight = particles[i].posWeight;
+    float weight    = posWeight.w;
     if (weight <= 0.0) return;
+
+    // Filtro en GPU: una gota que cae rápido (velocity.y < -1) no inyecta
+    // densidad al volumen. Así el charco solo se forma con agua asentada.
+    float vy = particles[i].velAge.y;
+    if (vy < uFallSpeedCutoff) return;
+
+    // ── Fase 3.7: solo agua acumulada en el fondo ───────────────────
+    // Se permite splatear si está dentro de la banda baja O si está casi
+    // quieta, pero SIEMPRE por debajo del techo duro. Las gotas en el aire
+    // quedan fuera y se siguen dibujando como GL_POINTS.
+    vec3  p     = posWeight.xyz;
+    float relY  = p.y - uGridMin.y;
+    bool  low   = relY <= uSplatHeight;
+    bool  calm  = abs(vy) <= uSettleSpeed;
+    if (!low && !calm) return;
+    if (relY > uSplatMaxHeight) return;
 
     vec3  cell    = (uGridMax - uGridMin) / vec3(uGridSize);
     float cellMax = max(cell.x, max(cell.y, cell.z));
     int   R       = int(ceil(uParticleRadius / cellMax));
 
-    vec3  p    = particles[i].xyz;
     vec3  g    = (p - uGridMin) / cell;
     ivec3 base = ivec3(round(g));
 
@@ -75,7 +113,11 @@ void main() {
             continue;
 
         vec3  gp = uGridMin + vec3(v) * cell;
-        float d2 = dot(p - gp, p - gp);
+        // Compresión anisotrópica: la distancia vertical pesa más, así el
+        // campo se aplana y el iso se convierte en una lámina horizontal.
+        vec3  d  = p - gp;
+        d.y *= uSplatYScale;
+        float d2 = dot(d, d);
         if (d2 >= r2) continue;
 
         float f = 1.0 - d2 / r2;

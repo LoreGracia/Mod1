@@ -81,6 +81,8 @@ int main() {
 
 			pcfg.pointSize = 15.0f;     // Puntos MUY grandes para que se solapen entre sí
 			pcfg.alpha     = 0.9f;
+			// Fase 3.7: oculta los puntos que ya están dentro de la lámina.
+			pcfg.rainHideBelowHeight = 0.30f;
 
 			st.marchingCubes = std::make_shared<GPUMarchingCubes>();
 			bool ok = st.marchingCubes->init(
@@ -95,6 +97,19 @@ int main() {
 			if (!ok) {
 				std::fprintf(stderr, "Failed to init Marching Cubes\n");
 			}
+			// Fase 3.6/3.7: charco plano. El iso está en unidades de
+			// "partículas efectivas": el pico de UNA partícula es 1.0, así
+			// que con 1.10 ninguna partícula aislada crea superficie.
+			st.marchingCubes->setIsoLevel(1.10f);
+			st.marchingCubes->setDensityScale(2000.0f);
+			st.marchingCubes->setParticleRadius(0.25f);
+			st.marchingCubes->setFallSpeedCutoff(-1.0f);
+			// Fase 3.7: solo agua acumulada en el fondo + anisotropía Y
+			// (YScale > 1 comprime la distancia vertical y aplana la lámina).
+			st.marchingCubes->setSplatHeight(0.15f);
+			st.marchingCubes->setSplatMaxHeight(0.22f);
+			st.marchingCubes->setSettleSpeed(0.5f);
+			st.marchingCubes->setSplatYScale(3.0f);
 			if (const char* m = std::getenv("WATER_MODE")) {
 				switch (std::atoi(m)) {
 					case 1: st.mode = Particles::Mode::UniformRise; break;

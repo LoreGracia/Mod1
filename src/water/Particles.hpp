@@ -42,6 +42,11 @@ class Particles {
 			float     rainPointSize   = 6.0f;
 			float     rainAlpha       = 0.75f;
 			glm::vec3 rainColor{0.55f, 0.80f, 1.0f};
+			// Fase 3.7: altura (sobre boundsMin.y) por debajo de la cual una
+			// gota ya es charco y deja de dibujarse como punto. Debe quedar
+			// un poco por encima de uSplatMaxHeight para tapar los puntos
+			// que quedarían dentro de la lámina de Marching Cubes.
+			float     rainHideBelowHeight = 0.30f;
 		};
 
 		Particles();

@@ -391,6 +391,7 @@ void Particles::render(Shader& shader, const glm::mat4& viewProj)
     shader.setFloat("uAlpha",      m_cfg.alpha);
     shader.setFloat("uDensityMin", m_cfg.restDensity * 0.9f);
     shader.setFloat("uDensityMax", m_cfg.restDensity * 1.3f);
+    shader.setFloat("uHideBelowY", -1e30f);
     m_mesh.drawPoints();
 }
 
@@ -407,5 +408,6 @@ void Particles::renderRainDrops(Shader& shader, const glm::mat4& viewProj)
     shader.setFloat("uAlpha",      m_cfg.rainAlpha);
     shader.setFloat("uDensityMin", m_cfg.restDensity * 0.9f);
     shader.setFloat("uDensityMax", m_cfg.restDensity * 1.3f);
+    shader.setFloat("uHideBelowY", m_cfg.boundsMin.y + m_cfg.rainHideBelowHeight);
     m_fallMesh.drawPoints(static_cast<GLsizei>(m_fallCount));
 }

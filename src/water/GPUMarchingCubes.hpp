@@ -46,6 +46,18 @@ public:
     void setIsoLevel(float iso)               { m_isoLevel = iso; }
     void setBounds(const glm::vec3& lo, const glm::vec3& hi);
 
+    // Splatting (Fase 3.6). Valores pensados para que una sola partícula
+    // (pico de densidad = 1.0) quede POR DEBAJO del iso y no genere blobs.
+    void setDensityScale(float s)             { m_densityScale = s; }
+    void setParticleRadius(float r)           { m_particleRadius = r; }
+    void setFallSpeedCutoff(float vy)         { m_fallSpeedCutoff = vy; }
+
+    // Fase 3.7: filtro estricto de agua acumulada + aplanado del charco.
+    void setSplatHeight(float h)              { m_splatHeight = h; }
+    void setSplatMaxHeight(float h)           { m_splatMaxHeight = h; }
+    void setSettleSpeed(float v)              { m_settleSpeed = v; }
+    void setSplatYScale(float s)              { m_splatYScale = s; }
+
     // Accesores de introspección (debug / UI).
     int    resolution()    const { return m_resolution; }
     float  isoLevel()      const { return m_isoLevel; }
@@ -80,7 +92,19 @@ private:
     glm::ivec3 m_gridSize{32, 32, 32};
     glm::ivec3 m_densitySize{33, 33, 33}; // gridSize + 1 para las esquinas
     int        m_resolution = 32;
-    float      m_isoLevel   = 0.5f;
+    // Iso en unidades de "partículas efectivas": 1.0 = pico de una partícula.
+    // Con >1.0 una partícula aislada nunca genera superficie; varias
+    // solapadas (charco compacto) producen la lámina.
+    float      m_isoLevel   = 1.10f;
+    float      m_densityScale = 2000.0f; // densidad normalizada -> uint
+    float      m_particleRadius = 0.25f;
+    float      m_fallSpeedCutoff = -1.0f; // vy < esto => no splat (gota)
+
+    // Fase 3.7: banda de splat + anisotropía vertical (aplanado).
+    float      m_splatHeight    = 0.15f; // relativo a boundsMin.y
+    float      m_splatMaxHeight = 0.22f; // techo absoluto (nunca splatear arriba)
+    float      m_settleSpeed    = 0.5f;  // |vy| <= esto => asentada
+    float      m_splatYScale    = 3.0f;  // >1 comprime Y y aplana el iso
 
     // ── Estado de los buffers ───────────────────────────────────
     GLuint m_maxParticles = 0;        // capacidad actual del particle SSBO
