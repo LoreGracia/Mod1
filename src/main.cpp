@@ -88,7 +88,7 @@ int main() {
 			bool ok = st.marchingCubes->init(
 				pcfg.boundsMin, 
 				pcfg.boundsMax, 
-				32, // Resolución baja para probar
+				48, // Fase 4: más resolución => superficie menos facetada
 				"src/water/shader/density_splat.comp",
 				"src/water/shader/marching_cubes.comp",
 				"src/water/shader/meshVertex.glsl",
@@ -109,7 +109,7 @@ int main() {
 			st.marchingCubes->setSplatHeight(0.15f);
 			st.marchingCubes->setSplatMaxHeight(0.22f);
 			st.marchingCubes->setSettleSpeed(0.5f);
-			st.marchingCubes->setSplatYScale(3.0f);
+			st.marchingCubes->setSplatYScale(3.5f);
 			if (const char* m = std::getenv("WATER_MODE")) {
 				switch (std::atoi(m)) {
 					case 1: st.mode = Particles::Mode::UniformRise; break;

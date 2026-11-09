@@ -10,9 +10,9 @@ Mesh::~Mesh()
 
 Mesh::Mesh(Mesh&& o) noexcept	: m_vao(o.m_vao), m_vbo(o.m_vbo), m_ebo(o.m_ebo)
 		, m_indexCount(o.m_indexCount), m_mode(o.m_mode), m_vbo2(o.m_vbo2)
-		, m_vertexCount(o.m_vertexCount)
+		, m_vbo3(o.m_vbo3), m_vertexCount(o.m_vertexCount)
 {
-	o.m_vao = o.m_vbo = o.m_ebo = o.m_vbo2 = 0;
+	o.m_vao = o.m_vbo = o.m_ebo = o.m_vbo2 = o.m_vbo3 = 0;
 	o.m_indexCount  = 0;
 	o.m_vertexCount = 0;
 }
@@ -25,11 +25,12 @@ Mesh& Mesh::operator=(Mesh&& o) noexcept
 		m_vbo			= o.m_vbo;
 		m_ebo			= o.m_ebo;
 		m_vbo2			= o.m_vbo2;
+		m_vbo3			= o.m_vbo3;
 		m_indexCount	= o.m_indexCount;
 		m_vertexCount	= o.m_vertexCount;
 		m_mode			= o.m_mode;
 
-		o.m_vao = o.m_vbo = o.m_ebo = o.m_vbo2 = 0;
+		o.m_vao = o.m_vbo = o.m_ebo = o.m_vbo2 = o.m_vbo3 = 0;
 		o.m_indexCount	= 0;
 		o.m_vertexCount	= 0;
 	}
@@ -46,7 +47,10 @@ void Mesh::release()
 		glDeleteVertexArrays(1, &m_vao);
 	if (m_vbo2)
 		glDeleteBuffers(1, &m_vbo2);
+	if (m_vbo3)
+		glDeleteBuffers(1, &m_vbo3);
 	m_vao = m_vbo = m_ebo	= 0;
+	m_vbo2 = m_vbo3			= 0;
 	m_indexCount			= 0;
 	m_vertexCount			= 0;
 }
@@ -125,7 +129,8 @@ void Mesh::draw() const
 }
 
 void Mesh::uploadPoints(const std::vector<float>& positions,
-						const std::vector<float>& densities)
+						const std::vector<float>& densities,
+						const std::vector<float>& velocities)
 {
 	release();
 	m_mode        = GL_POINTS;
@@ -154,11 +159,23 @@ void Mesh::uploadPoints(const std::vector<float>& positions,
 		glEnableVertexAttribArray(1);
 	}
 
+	if (!velocities.empty()) {
+		glGenBuffers(1, &m_vbo3);
+		glBindBuffer(GL_ARRAY_BUFFER, m_vbo3);
+		glBufferData(GL_ARRAY_BUFFER,
+					velocities.size() * sizeof(float),
+					velocities.data(), GL_DYNAMIC_DRAW);
+		glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE,
+						3 * sizeof(float), (void*)0);
+		glEnableVertexAttribArray(2);
+	}
+
 	glBindVertexArray(0);
 }
 
 void Mesh::updatePoints(const std::vector<float>& positions,
-						const std::vector<float>& densities)
+						const std::vector<float>& densities,
+						const std::vector<float>& velocities)
 {
 	if (!m_vbo) return;
 
@@ -172,6 +189,13 @@ void Mesh::updatePoints(const std::vector<float>& positions,
 		glBufferSubData(GL_ARRAY_BUFFER, 0,
 						densities.size() * sizeof(float),
 						densities.data());
+	}
+
+	if (m_vbo3 && !velocities.empty()) {
+		glBindBuffer(GL_ARRAY_BUFFER, m_vbo3);
+		glBufferSubData(GL_ARRAY_BUFFER, 0,
+						velocities.size() * sizeof(float),
+						velocities.data());
 	}
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 }

@@ -22,9 +22,11 @@ public:
 	void draw() const;
 
 	void uploadPoints(const std::vector<float>& positions,
-					const std::vector<float>& densities = {});
+					const std::vector<float>& densities = {},
+					const std::vector<float>& velocities = {});
 	void updatePoints(const std::vector<float>& positions,
-					const std::vector<float>& densities = {});
+					const std::vector<float>& densities = {},
+					const std::vector<float>& velocities = {});
 	void drawPoints() const;
 	// Dibuja solo los primeros `count` puntos del buffer actual.
 	void drawPoints(GLsizei count) const;
@@ -38,6 +40,7 @@ private:
 	GLuint	m_vao = 0, m_vbo = 0, m_ebo = 0;
 	GLsizei	m_indexCount = 0;
 	GLenum	m_mode		 = GL_TRIANGLES;
-	GLuint	m_vbo2 = 0;
+	GLuint	m_vbo2 = 0;   // densidades (attrib 1)
+	GLuint	m_vbo3 = 0;   // velocidades (attrib 2, Fase 4)
 	GLsizei	m_vertexCount = 0;
 };

@@ -263,12 +263,15 @@ void Particles::update(float dt)
             m_fallPositions[k * 3 + 0] = p.position.x;
             m_fallPositions[k * 3 + 1] = p.position.y;
             m_fallPositions[k * 3 + 2] = p.position.z;
+            m_fallVelocities[k * 3 + 0] = p.velocity.x;
+            m_fallVelocities[k * 3 + 1] = p.velocity.y;
+            m_fallVelocities[k * 3 + 2] = p.velocity.z;
             m_fallDensities[k]         = p.density;
         }
     }
 
     if (rain)
-        m_fallMesh.updatePoints(m_fallPositions, m_fallDensities);
+        m_fallMesh.updatePoints(m_fallPositions, m_fallDensities, m_fallVelocities);
 
     // Debug: cada 30 frames
     if (++m_debugCounter % 30 == 0) {
@@ -360,11 +363,12 @@ void Particles::init(size_t count, Mode mode, const Config& cfg)
     m_densities.assign(count, m_cfg.restDensity);
     m_fallPositions.assign(count * 3, 0.f);
     m_fallDensities.assign(count, 0.f);
+    m_fallVelocities.assign(count * 3, 0.f);
     m_fallCount = 0;
 
     spawnAll(mode);
     m_mesh.uploadPoints(m_positions, m_densities);
-    m_fallMesh.uploadPoints(m_fallPositions, m_fallDensities);
+    m_fallMesh.uploadPoints(m_fallPositions, m_fallDensities, m_fallVelocities);
 }
 
 void Particles::reset(Mode mode)
@@ -392,6 +396,7 @@ void Particles::render(Shader& shader, const glm::mat4& viewProj)
     shader.setFloat("uDensityMin", m_cfg.restDensity * 0.9f);
     shader.setFloat("uDensityMax", m_cfg.restDensity * 1.3f);
     shader.setFloat("uHideBelowY", -1e30f);
+    shader.setFloat("uSplashSpeed", m_cfg.rainSplashSpeed);
     m_mesh.drawPoints();
 }
 
@@ -409,5 +414,6 @@ void Particles::renderRainDrops(Shader& shader, const glm::mat4& viewProj)
     shader.setFloat("uDensityMin", m_cfg.restDensity * 0.9f);
     shader.setFloat("uDensityMax", m_cfg.restDensity * 1.3f);
     shader.setFloat("uHideBelowY", m_cfg.boundsMin.y + m_cfg.rainHideBelowHeight);
+    shader.setFloat("uSplashSpeed", m_cfg.rainSplashSpeed);
     m_fallMesh.drawPoints(static_cast<GLsizei>(m_fallCount));
 }

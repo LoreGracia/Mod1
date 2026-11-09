@@ -47,6 +47,9 @@ class Particles {
 			// un poco por encima de uSplatMaxHeight para tapar los puntos
 			// que quedarían dentro de la lámina de Marching Cubes.
 			float     rainHideBelowHeight = 0.30f;
+			// Fase 4: una gota por debajo del umbral solo se oculta si está
+			// casi en reposo. Si salpica (|v| >= esto) sigue visible.
+			float     rainSplashSpeed = 0.6f;
 		};
 
 		Particles();
@@ -95,6 +98,7 @@ class Particles {
 		std::vector<float>		m_densities;   // flat float
 		std::vector<float>		m_fallPositions; // gotas en el aire (subconjunto)
 		std::vector<float>		m_fallDensities;
+		std::vector<float>		m_fallVelocities; // Fase 4: para salpicaduras
 		size_t					m_fallCount = 0;
 		Mesh					m_mesh;
 		Mesh					m_fallMesh;
