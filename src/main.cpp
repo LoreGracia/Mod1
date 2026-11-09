@@ -72,17 +72,21 @@ int main() {
 			pcfg.restDensity  = 150.f;  
 			pcfg.particleMass = 0.5f;  // Masa más pequeña para que no haya picos de presión
 			pcfg.stiffness    = 80.f;   // Fuerza de empuje moderada
-			pcfg.viscosity    = 0.3f;   // ¡CLAVE! Subimos mucho la viscosidad. Esto frena el efecto "gas" y hace que fluyan como un bloque de agua.
+			// Fase 5: viscosidad más baja => líquido, no gelatina. El
+			// amortiguamiento suave (0.99/subpaso) asienta sin "pegajosidad".
+			pcfg.viscosity    = 0.12f;
 			pcfg.gravity      = -9.8f;
-			pcfg.damping      = 0.95f;
+			pcfg.damping      = 0.99f;
 			pcfg.substeps     = 8;      // Subimos a 8 para que la simulación sea más estable y suave
 
 			pcfg.wallRestitution = 0.0f; 
 
 			pcfg.pointSize = 15.0f;     // Puntos MUY grandes para que se solapen entre sí
 			pcfg.alpha     = 0.9f;
-			// Fase 3.7: oculta los puntos que ya están dentro de la lámina.
-			pcfg.rainHideBelowHeight = 0.30f;
+			// Fase 5: margen sobre la superficie REAL del charco (se calcula
+			// dinámicamente en Particles::update a partir de las partículas
+			// asentadas, no con una altura fija).
+			pcfg.rainHideMargin = 0.06f;
 
 			st.marchingCubes = std::make_shared<GPUMarchingCubes>();
 			bool ok = st.marchingCubes->init(
@@ -102,14 +106,14 @@ int main() {
 			// que con 1.10 ninguna partícula aislada crea superficie.
 			st.marchingCubes->setIsoLevel(1.10f);
 			st.marchingCubes->setDensityScale(2000.0f);
-			st.marchingCubes->setParticleRadius(0.25f);
+			st.marchingCubes->setParticleRadius(0.28f);
 			st.marchingCubes->setFallSpeedCutoff(-1.0f);
 			// Fase 3.7: solo agua acumulada en el fondo + anisotropía Y
 			// (YScale > 1 comprime la distancia vertical y aplana la lámina).
 			st.marchingCubes->setSplatHeight(0.15f);
 			st.marchingCubes->setSplatMaxHeight(0.22f);
 			st.marchingCubes->setSettleSpeed(0.5f);
-			st.marchingCubes->setSplatYScale(3.5f);
+			st.marchingCubes->setSplatYScale(2.0f);
 			if (const char* m = std::getenv("WATER_MODE")) {
 				switch (std::atoi(m)) {
 					case 1: st.mode = Particles::Mode::UniformRise; break;
@@ -188,7 +192,6 @@ int main() {
 
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            glDepthMask(GL_FALSE);
 
             // st.water->render(*st.shader, vp);
 
@@ -201,11 +204,17 @@ int main() {
 					std::printf("[MC] debug vertexCount = %u\n",
 					            st.marchingCubes->debugReadDrawCount());
 			}
-			st.marchingCubes->render(vp, st.cam.position(), st.time);
 
-			// Gotas en el aire: solo puntos (el charco ya salió del MC).
+			// Fase 5: las gotas se dibujan PRIMERO y escriben profundidad,
+			// así el agua (transparente, sin escritura de depth) las ocluye
+			// cuando están sumergidas. Antes se dibujaban encima de la
+			// superficie y parecían flotar.
+			glDepthMask(GL_TRUE);
 			if (st.mode == Particles::Mode::Rain)
 				st.water->renderRainDrops(*st.shader, vp);
+
+			glDepthMask(GL_FALSE);
+			st.marchingCubes->render(vp, st.cam.position(), st.time);
 
             glDepthMask(GL_TRUE);
             glDisable(GL_BLEND);

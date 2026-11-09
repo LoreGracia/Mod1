@@ -42,11 +42,10 @@ class Particles {
 			float     rainPointSize   = 6.0f;
 			float     rainAlpha       = 0.75f;
 			glm::vec3 rainColor{0.55f, 0.80f, 1.0f};
-			// Fase 3.7: altura (sobre boundsMin.y) por debajo de la cual una
-			// gota ya es charco y deja de dibujarse como punto. Debe quedar
-			// un poco por encima de uSplatMaxHeight para tapar los puntos
-			// que quedarían dentro de la lámina de Marching Cubes.
-			float     rainHideBelowHeight = 0.30f;
+			// Fase 5: la altura de ocultación ya no es fija. Se calcula en
+			// cada frame a partir de la superficie real del charco (máx. Y de
+			// las partículas asentadas) + este margen.
+			float     rainHideMargin = 0.06f;
 			// Fase 4: una gota por debajo del umbral solo se oculta si está
 			// casi en reposo. Si salpica (|v| >= esto) sigue visible.
 			float     rainSplashSpeed = 0.6f;
@@ -99,6 +98,7 @@ class Particles {
 		std::vector<float>		m_fallPositions; // gotas en el aire (subconjunto)
 		std::vector<float>		m_fallDensities;
 		std::vector<float>		m_fallVelocities; // Fase 4: para salpicaduras
+		float					m_puddleTopY = 0.f; // Fase 5: superficie real del charco
 		size_t					m_fallCount = 0;
 		Mesh					m_mesh;
 		Mesh					m_fallMesh;

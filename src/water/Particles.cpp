@@ -103,8 +103,9 @@ void Particles::stepSPH(float dt)
         pi.pressure = m_cfg.stiffness * (pi.density - m_cfg.restDensity);
         
         // CLAVE: Evitar inestabilidad de tracción (Tensile Instability).
-        // Permitimos una presión negativa MUY leve para cohesión, pero no más.
-        float minPressure = -0.005f * m_cfg.stiffness; 
+        // Fase 5: cohesión más débil => el agua se extiende y aplana en vez
+        // de formar grumos tipo gelatina.
+        float minPressure = -0.002f * m_cfg.stiffness;
         pi.pressure = std::max(pi.pressure, minPressure);
 		// pi.pressure = std::max(pi.pressure, 0.f);
         
@@ -131,27 +132,27 @@ void Particles::stepSPH(float dt)
         });
         pi.force += fPress + fVisc;
     }
+    // 3. XSPH: suavizado de velocidad normalizado. Elimina el "jitter" y
+    // los grumos sin añadir viscosidad artificial excesiva (Fase 5).
+    const float xsph = 0.10f;
+    for (size_t i = 0; i < n; ++i) {
+        Particle& pi = m_particles[i];
+        glm::vec3 dv{0.f};
+        float wsum = 0.f;
+        forEachNeighbor(i, [&](size_t j) {
+            const Particle& pj = m_particles[j];
+            glm::vec3 d = pi.position - pj.position;
+            float r2 = glm::dot(d, d);
+            if (r2 < h2) {
+                float w = kernelPoly6(r2, h, h2);
+                dv   += (pj.velocity - pi.velocity) * w;
+                wsum += w;
+            }
+        });
+        if (wsum > 1e-12f)
+            pi.velocity += xsph * (dv / wsum);
+    }
     (void)dt;
-
-	//     // 3. Viscosidad XSPH (Suavizado de velocidad para eliminar el "jitter")
-    // // Esto promedia la velocidad de cada partícula con sus vecinas.
-    // const float xsph_epsilon = 0.4f; 
-    // for (size_t i = 0; i < n; ++i) {
-    //     Particle& pi = m_particles[i];
-    //     glm::vec3 vDelta{0.f};
-    //     forEachNeighbor(i, [&](size_t j) {
-    //         const Particle& pj = m_particles[j];
-    //         glm::vec3 d = pi.position - pj.position;
-    //         float r2 = glm::dot(d, d);
-    //         if (r2 < h2) {
-    //             // Usamos un kernel de densidad normalizado
-    //             vDelta += (pj.velocity - pi.velocity) * kernelPoly6(r2, h, h2);
-    //         }
-    //     });
-    //     // Aplicamos un porcentaje del cambio de velocidad
-    //     pi.velocity += vDelta * xsph_epsilon;
-    // }
-    // (void)dt;
 }
 // void Particles::integrate(float dt)
 // {
@@ -243,6 +244,10 @@ void Particles::update(float dt)
     const bool rain = (m_mode == Mode::Rain);
     const float airY = m_cfg.boundsMax.y - m_cfg.rainAirBand;
     m_fallCount = 0;
+    // Fase 5: superficie real del charco = mayor Y de las partículas que
+    // sí aportan densidad (no aéreas). Se usa para ocultar gotas justo a
+    // la altura del iso, no con un umbral fijo.
+    float puddleTop = m_cfg.boundsMin.y;
 
     for (size_t i = 0; i < m_particles.size(); ++i) {
         Particle& p = m_particles[i];
@@ -252,6 +257,8 @@ void Particles::update(float dt)
              glm::length(p.velocity) > m_cfg.rainSettleSpeed ||
              p.position.y > airY);
         p.splatWeight = airborne ? 0.f : 1.f;
+        if (!airborne)
+            puddleTop = std::max(puddleTop, p.position.y);
 
         m_positions[i * 3 + 0] = p.position.x;
         m_positions[i * 3 + 1] = p.position.y;
@@ -269,6 +276,8 @@ void Particles::update(float dt)
             m_fallDensities[k]         = p.density;
         }
     }
+
+    m_puddleTopY = puddleTop;
 
     if (rain)
         m_fallMesh.updatePoints(m_fallPositions, m_fallDensities, m_fallVelocities);
@@ -413,7 +422,10 @@ void Particles::renderRainDrops(Shader& shader, const glm::mat4& viewProj)
     shader.setFloat("uAlpha",      m_cfg.rainAlpha);
     shader.setFloat("uDensityMin", m_cfg.restDensity * 0.9f);
     shader.setFloat("uDensityMax", m_cfg.restDensity * 1.3f);
-    shader.setFloat("uHideBelowY", m_cfg.boundsMin.y + m_cfg.rainHideBelowHeight);
+    // Fase 5: umbral dinámico pegado a la superficie real del charco.
+    // Las gotas que caen por debajo de esa altura se ocultan (si están en
+    // reposo); las salpicaduras siguen visibles gracias a uSplashSpeed.
+    shader.setFloat("uHideBelowY", m_puddleTopY + m_cfg.rainHideMargin);
     shader.setFloat("uSplashSpeed", m_cfg.rainSplashSpeed);
     m_fallMesh.drawPoints(static_cast<GLsizei>(m_fallCount));
 }
