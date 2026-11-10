@@ -1,111 +1,182 @@
 #pragma once
 #include <glad/gl.h>
 
-#include "Particle.hpp"	 // std::vector<Particle> (ajusta la ruta si no usas -Isrc)
-#include "Shader.hpp"	 // Shader m_computeShader / m_meshShader
+#include <Particle.hpp>
+#include <Shader.hpp>
 
 #include <glm.hpp>
 #include <string>
 #include <vector>
 
+/**
+ * @file GPUMarchingCubes.hpp
+ * @brief Defines the GPUMarchingCubes class, which orchestrates the GPU-based 
+ * Marching Cubes pipeline (density splatting + surface extraction).
+ */
+
+/**
+ * @class GPUMarchingCubes
+ * @brief Manages the full GPU Marching Cubes pipeline.
+ * 
+ * This class owns the 3D density texture, the compute shaders (splatting and 
+ * Marching Cubes), the vertex/draw command SSBOs, and the VAO used for 
+ * indirect rendering. It transforms CPU particles into a rendered water mesh 
+ * entirely on the GPU.
+ * 
+ * @note This class is non-copyable due to its ownership of unique GPU resources
+ * and Shader objects. Use std::shared_ptr or std::unique_ptr if needed.
+ */
 class GPUMarchingCubes
 {
 public:
+	/** @brief Default constructor. */
 	GPUMarchingCubes();
+
+	/** @brief Destructor. Calls release() to free GPU resources. */
 	~GPUMarchingCubes();
 
-	// Shader es no-copyable; GPUMarchingCubes también.
-	// Si lo necesitas en main, usa std::shared_ptr o std::unique_ptr.
+	// Shader is non-copyable; GPUMarchingCubes is also non-copyable.
+	// If needed in main, use std::shared_ptr or std::unique_ptr.
 	GPUMarchingCubes(const GPUMarchingCubes&)			 = delete;
 	GPUMarchingCubes& operator=(const GPUMarchingCubes&) = delete;
 
-	// Carga compute + mesh shaders, crea SSBOs y VAO.
-	//   resolution = lados de la rejilla cúbica (32, 64, 128...).
-	//   Devuelve false si algún shader falla al compilar.
+	/**
+	 * @brief Initializes the pipeline: loads shaders, creates SSBOs and the VAO.
+	 * 
+	 * @param boundsMin Minimum world-space bound of the simulation grid.
+	 * @param boundsMax Maximum world-space bound of the simulation grid.
+	 * @param resolution Side length of the cubic grid (32, 64, 128...).
+	 * @param splatPath Path to the density splatting compute shader (density_splat.comp).
+	 * @param computePath Path to the Marching Cubes compute shader (marching_cubes.comp).
+	 * @param vertPath Path to the mesh vertex shader (meshVertex.glsl).
+	 * @param fragPath Path to the mesh fragment shader (meshFrag.frag).
+	 * @return True if all shaders compiled and buffers were created successfully.
+	 */
 	bool init(const glm::vec3& boundsMin, const glm::vec3& boundsMax, int resolution,
 			  const std::string& splatPath,	   // density_splat.comp
 			  const std::string& computePath,  // marching_cubes.comp
 			  const std::string& vertPath,	   // meshVertex.glsl
 			  const std::string& fragPath);	   // meshFrag.frag
 
-	// Sube las posiciones de las partículas al SSBO de entrada.
-	// Si el número de partículas ha crecido, reasigna el buffer (solo crece).
+	/**
+	 * @brief Uploads particle data to the input SSBO.
+	 * 
+	 * If the number of particles has grown, reallocates the buffer 
+	 * (it only grows, never shrinks).
+	 * 
+	 * @param particles The CPU particle data to upload.
+	 */
 	void uploadParticles(const std::vector<Particle>& particles);
 
-	// Reset del counter → bind SSBOs → uniforms → dispatch → barrier → readback.
+	/**
+	 * @brief Executes the mesh generation pipeline on the GPU.
+	 * 
+	 * Clears the density texture, dispatches the splatting compute shader, 
+	 * then dispatches the Marching Cubes compute shader. Memory barriers 
+	 * are inserted between passes.
+	 */
 	void generateMesh();
 
-	// Lee el comando indirecto y dibuja los triángulos si hay > 0.
-	// Debe llamarse después de generateMesh() en el mismo frame.
+	/**
+	 * @brief Renders the generated mesh using indirect drawing.
+	 * 
+	 * Must be called after generateMesh() in the same frame.
+	 * 
+	 * @param viewProj The combined view-projection matrix.
+	 * @param cameraPos The world-space position of the camera.
+	 * @param time The current application time (for wave animation).
+	 */
 	void render(const glm::mat4& viewProj, const glm::vec3& cameraPos, float time);
 
-	// Ajustes sin reasignar buffers.
+	/** @brief Sets the isosurface extraction threshold. */
 	void setIsoLevel(float iso) { m_isoLevel = iso; }
+
+	/**
+	 * @brief Updates the simulation bounds without reallocating buffers.
+	 * @param lo The new minimum bound.
+	 * @param hi The new maximum bound.
+	 */
 	void setBounds(const glm::vec3& lo, const glm::vec3& hi);
 
-	// Splatting (Fase 3.6). Valores pensados para que una sola partícula
-	// (pico de densidad = 1.0) quede POR DEBAJO del iso y no genere blobs.
+	/** @brief Sets the density scale factor for fixed-point conversion. */
 	void setDensityScale(float s) { m_densityScale = s; }
+
+	/** @brief Sets the radius of influence for the metaball kernel. */
 	void setParticleRadius(float r) { m_particleRadius = r; }
+
+	/** @brief Sets the vertical speed cutoff below which particles are ignored. */
 	void setFallSpeedCutoff(float vy) { m_fallSpeedCutoff = vy; }
 
-	// Fase 3.7: filtro estricto de agua acumulada + aplanado del charco.
+	/** @brief Sets the vertical band (relative to boundsMin.y) for splatting. */
 	void setSplatHeight(float h) { m_splatHeight = h; }
+
+	/** @brief Sets the absolute ceiling above which density is never injected. */
 	void setSplatMaxHeight(float h) { m_splatMaxHeight = h; }
+
+	/** @brief Sets the maximum vertical speed for a particle to be considered settled. */
 	void setSettleSpeed(float v) { m_settleSpeed = v; }
+
+	/** @brief Sets the vertical compression factor for the metaball kernel (>1 flattens). */
 	void setSplatYScale(float s) { m_splatYScale = s; }
 
-	// Accesores de introspección (debug / UI).
+	/** @brief Gets the grid resolution per axis. */
 	int	  resolution() const { return m_resolution; }
+
+	/** @brief Gets the current isosurface level. */
 	float isoLevel() const { return m_isoLevel; }
+
+	/** @brief Checks if the pipeline has been initialized. */
 	bool  isInitialized() const { return m_initialized; }
 
-	// Solo para depuración: fuerza un readback. NO usar en el bucle de render.
+	/**
+	 * @brief Forces a synchronous readback of the draw command.
+	 * @note This breaks the GPU pipeline and should NEVER be used in the render loop.
+	 * Only for debugging purposes.
+	 * @return The current vertex count.
+	 */
 	GLuint debugReadDrawCount() const;
 
-	// Libera todos los recursos GL. Idempotente.
-	// Se llama desde el destructor; puedes llamarlo antes si quieres.
+	/**
+	 * @brief Releases all OpenGL resources.
+	 * @note Idempotent. Called from the destructor; can be called manually if needed.
+	 */
 	void release();
 
 private:
-	// Sólo usados internamente por init() y generateMesh().
+	/** @brief Internal helper to create SSBOs, 3D texture, and VAO. */
 	void createBuffers();
 
-	// ── GPU buffers ─────────────────────────────────────────────
-	GLuint m_particleSSBO = 0;	// binding 0 del splat: vec4 por partícula
-	GLuint m_vertexSSBO	  = 0;	// binding 1: vec4 por vértice de salida
-	GLuint m_drawCmdSSBO  = 0;	// binding 2: DrawArraysIndirectCommand
-	GLuint m_emptyVAO	  = 0;	// VAO sin VBO; lee del m_vertexSSBO
-	GLuint m_densityTex	  = 0;	// textura 3D GL_R32UI de densidad
+	GLuint m_particleSSBO = 0;	///< Binding 0 of splat: GPUParticle struct.
+	GLuint m_vertexSSBO	  = 0;	///< Binding 1: GPUVertex struct per output vertex.
+	GLuint m_drawCmdSSBO  = 0;  ///< Binding 2: DrawArraysIndirectCommand.
+	GLuint m_emptyVAO	  = 0;	///< VAO without VBO; reads from m_vertexSSBO.
+	GLuint m_densityTex	  = 0;	///< 3D GL_R32UI density texture.
 
-	// ── Shaders ─────────────────────────────────────────────────
-	Shader m_splatShader;	 // density_splat.comp
-	Shader m_computeShader;	 // marching_cubes.comp
-	Shader m_meshShader;	 // meshVertex + meshFrag
+	Shader m_splatShader;	 ///< density_splat.comp
+	Shader m_computeShader;	 ///< marching_cubes.comp
+	Shader m_meshShader;	 ///< meshVertex + meshFrag
 
-	// ── Configuración (fija tras init) ──────────────────────────
-	glm::vec3  m_boundsMin{0.f};
-	glm::vec3  m_boundsMax{1.f};
-	glm::ivec3 m_gridSize{32, 32, 32};
-	glm::ivec3 m_densitySize{33, 33, 33};  // gridSize + 1 para las esquinas
+	glm::vec3  m_boundsMin{0.f};          ///< Minimum world-space bound.
+	glm::vec3  m_boundsMax{1.f};          ///< Maximum world-space bound.
+	glm::ivec3 m_gridSize{32, 32, 32};    ///< Number of voxels per axis.
+	glm::ivec3 m_densitySize{33, 33, 33}; ///< gridSize + 1 for the corners.  // gridSize + 1 para las esquinas
 	int		   m_resolution = 32;
-	// Iso en unidades de "partículas efectivas": 1.0 = pico de una partícula.
-	// Con >1.0 una partícula aislada nunca genera superficie; varias
-	// solapadas (charco compacto) producen la lámina.
+
+	// Iso level in "effective particles" units: 1.0 = one particle's peak.
+	// Values >1.0 mean a single particle never generates a surface; multiple
+	// overlapping particles (compact puddle) produce the sheet.
 	float m_isoLevel		= 1.10f;
-	float m_densityScale	= 2000.0f;	// densidad normalizada -> uint
-	float m_particleRadius	= 0.25f;
-	float m_fallSpeedCutoff = -1.0f;  // vy < esto => no splat (gota)
+	float m_densityScale	= 2000.0f;	///< Density normalized to uint for f
+	float m_particleRadius	= 0.25f;    ///< Radius of influence for the metaball.
+	float m_fallSpeedCutoff = -1.0f;    ///< vy < this => no splat (falling drop).
 
-	// Fase 3.7: banda de splat + anisotropía vertical (aplanado).
-	float m_splatHeight	   = 0.15f;	 // relativo a boundsMin.y
-	float m_splatMaxHeight = 0.22f;	 // techo absoluto (nunca splatear arriba)
-	float m_settleSpeed	   = 0.5f;	 // |vy| <= esto => asentada
-	float m_splatYScale	   = 3.0f;	 // >1 comprime Y y aplana el iso
+	float m_splatHeight	   = 0.15f;	 ///< Relative to boundsMin.y.
+	float m_splatMaxHeight = 0.22f;  ///< Absolute ceiling (never splat above).
+	float m_settleSpeed	   = 0.5f;   ///< |vy| <= this => settled.
+	float m_splatYScale	   = 3.0f;	 ///< >1 compresses Y and flattens the iso.
 
-	// ── Estado de los buffers ───────────────────────────────────
-	GLuint m_maxParticles  = 0;	 // capacidad actual del particle SSBO
-	GLuint m_maxVertices   = 0;	 // capacidad del vertex SSBO (grid.x*grid.y*grid.z*15)
-	GLuint m_particleCount = 0;	 // partículas válidas en el SSBO
-	bool   m_initialized   = false;
+	GLuint m_maxParticles  = 0;      ///< Current capacity of the particle SSBO.
+	GLuint m_maxVertices   = 0;	     ///< Capacity of the vertex SSBO (grid.x*grid.y*grid.z*15).
+	GLuint m_particleCount = 0;	     ///< Valid particles currently in the SSBO.
+	bool   m_initialized   = false;  ///< Flag indicating if the pipeline is ready.
 };
