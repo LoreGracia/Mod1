@@ -62,26 +62,30 @@ RENDER_DIR = $(WRAPPER_DIR)/render
 SCENE_DIR = $(WRAPPER_DIR)/scene
 
 WATER_DIR = water
+TERRAIN_DIR = terrain
 
 SUB_DIR_OBJ =	$(OBJ_DIR)/$(EXTER_DIR) $(OBJ_DIR)/$(GLDIR) \
                 $(OBJ_DIR)/$(WRAPPER_DIR) $(OBJ_DIR)/$(CORE_DIR) \
                 $(OBJ_DIR)/$(MATH_DIR) $(OBJ_DIR)/$(RENDER_DIR) \
                 $(OBJ_DIR)/$(SCENE_DIR) \
-				$(OBJ_DIR)/$(WATER_DIR)
+				$(OBJ_DIR)/$(WATER_DIR) \
+				$(OBJ_DIR)/$(TERRAIN_DIR)
 
 SUB_DIR_DEP =	$(DEP_DIR)/$(EXTER_DIR) $(DEP_DIR)/$(GLDIR) \
                 $(DEP_DIR)/$(WRAPPER_DIR) $(DEP_DIR)/$(CORE_DIR) \
                 $(DEP_DIR)/$(MATH_DIR) $(DEP_DIR)/$(RENDER_DIR) \
                 $(DEP_DIR)/$(SCENE_DIR) \
-				$(DEP_DIR)/$(WATER_DIR)
+				$(DEP_DIR)/$(WATER_DIR) \
+				$(DEP_DIR)/$(TERRAIN_DIR)
 
 
 
-SOURCES := $(WATER_DIR)/GPUMarchingCubes.cpp $(WATER_DIR)/Particles.cpp main.cpp
+SOURCES := $(WATER_DIR)/GPUMarchingCubes.cpp $(WATER_DIR)/Particles.cpp main.cpp $(TERRAIN_DIR)/Terrain.cpp
 GLSOURCES := $(GLDIR)/gl.c
 WRAPSOURCES :=	$(CORE_DIR)/WWindow.cpp $(CORE_DIR)/Environment.cpp $(CORE_DIR)/Input.cpp \
                 $(RENDER_DIR)/Shader.cpp $(RENDER_DIR)/Mesh.cpp $(RENDER_DIR)/Renderer.cpp \
-                $(SCENE_DIR)/Camera.cpp $(SCENE_DIR)/Transform.cpp $(SCENE_DIR)/Entity.cpp $(SCENE_DIR)/Scene.cpp
+                $(SCENE_DIR)/Camera.cpp $(SCENE_DIR)/Transform.cpp $(SCENE_DIR)/Entity.cpp \
+				$(SCENE_DIR)/Scene.cpp $(WRAPPER_DIR)/utils.cpp
 
 INCLUDES := $(addprefix -I, ./external/glm)
 INCLUDES += $(addprefix -I, ./external/glm/detail)
@@ -96,6 +100,7 @@ INCLUDES += $(addprefix -I, ./Wrapper/math)
 INCLUDES += $(addprefix -I, ./Wrapper/render)
 INCLUDES += $(addprefix -I, ./Wrapper/scene)
 INCLUDES += $(addprefix -I, ./src/water)
+INCLUDES += $(addprefix -I, ./src/terrain)
 
 OBJS =  $(addprefix $(OBJ_DIR)/, $(SOURCES:.cpp=.o))
 DEPS = $(addprefix $(DEP_DIR)/, $(SOURCES:.cpp=.d))
