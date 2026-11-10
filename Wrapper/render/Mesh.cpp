@@ -1,13 +1,25 @@
-// src/render/Mesh.cpp
+/**
+ * @file Mesh.cpp
+ * @brief Implementation of the Mesh class, handling OpenGL buffer creation,
+ * data uploading, and drawing commands.
+ */
+
 #include <glad/gl.h>
 
-#include "render/Mesh.hpp"
+#include <Mesh.hpp>
 
+/**
+ * @brief Destructor. Ensures all OpenGL resources are released.
+ */
 Mesh::~Mesh()
 {
 	release();
 }
 
+/**
+ * @brief Move constructor. Transfers ownership of OpenGL handles from another Mesh.
+ * @param o The Mesh to move from.
+ */
 Mesh::Mesh(Mesh&& o) noexcept
 	: m_vao(o.m_vao), m_vbo(o.m_vbo), m_ebo(o.m_ebo), m_indexCount(o.m_indexCount),
 	  m_mode(o.m_mode), m_vbo2(o.m_vbo2), m_vbo3(o.m_vbo3), m_vertexCount(o.m_vertexCount)
@@ -17,6 +29,12 @@ Mesh::Mesh(Mesh&& o) noexcept
 	o.m_vertexCount									  = 0;
 }
 
+/**
+ * @brief Move assignment operator. Releases current resources and transfers
+ * ownership from another Mesh.
+ * @param o The Mesh to move from.
+ * @return A reference to this Mesh.
+ */
 Mesh& Mesh::operator=(Mesh&& o) noexcept
 {
 	if (this != &o) {
@@ -37,6 +55,9 @@ Mesh& Mesh::operator=(Mesh&& o) noexcept
 	return *this;
 }
 
+/**
+ * @brief Releases all allocated OpenGL buffers and resets member variables.
+ */
 void Mesh::release()
 {
 	if (m_ebo)
@@ -55,6 +76,12 @@ void Mesh::release()
 	m_vertexCount	= 0;
 }
 
+/**
+ * @brief Uploads indexed geometry data (positions only) to the GPU.
+ * @param v Flat array of vertex positions (x, y, z).
+ * @param idx Array of indices for the triangles.
+ * @param mode The primitive type to draw (e.g., GL_TRIANGLES).
+ */
 void Mesh::upload(const std::vector<float>& v, const std::vector<uint32_t>& idx, GLenum mode)
 {
 	release();
@@ -78,6 +105,14 @@ void Mesh::upload(const std::vector<float>& v, const std::vector<uint32_t>& idx,
 	glBindVertexArray(0);
 }
 
+/**
+ * @brief Uploads indexed geometry data with per-vertex colors to the GPU.
+ * @note The positions and colors arrays must have the same number of vertices.
+ * @param positions Flat array of vertex positions (x, y, z).
+ * @param colors Flat array of vertex colors (r, g, b).
+ * @param indices Array of indices.
+ * @param mode The primitive type to draw.
+ */
 void Mesh::upload(const std::vector<float>& positions, const std::vector<float>& colors,
 				  const std::vector<uint32_t>& indices, GLenum mode)
 {
@@ -88,6 +123,8 @@ void Mesh::upload(const std::vector<float>& positions, const std::vector<float>&
 	const std::size_t  vertexCount = positions.size() / 3;
 	std::vector<float> interleaved;
 	interleaved.reserve(vertexCount * 6);
+
+	// Interleave positions and colors into a single buffer for cache efficiency.
 	for (std::size_t i = 0; i < vertexCount; ++i) {
 		interleaved.push_back(positions[i * 3 + 0]);
 		interleaved.push_back(positions[i * 3 + 1]);
@@ -112,15 +149,20 @@ void Mesh::upload(const std::vector<float>& positions, const std::vector<float>&
 
 	const GLsizei stride = 6 * sizeof(float);
 
+	// Attribute 0: Position
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)0);
 	glEnableVertexAttribArray(0);
 
+	// Attribute 1: Color
 	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)(3 * sizeof(float)));
 	glEnableVertexAttribArray(1);
 
 	glBindVertexArray(0);
 }
 
+/**
+ * @brief Draws the indexed geometry using the currently bound shader.
+ */
 void Mesh::draw() const
 {
 	glBindVertexArray(m_vao);
@@ -128,6 +170,12 @@ void Mesh::draw() const
 	glBindVertexArray(0);
 }
 
+/**
+ * @brief Uploads point cloud data to the GPU for point rendering.
+ * @param positions Flat array of point positions (x, y, z).
+ * @param densities Optional array of density values. Mapped to attribute 1.
+ * @param velocities Optional array of velocity vectors. Mapped to attribute 2.
+ */
 void Mesh::uploadPoints(const std::vector<float>& positions, const std::vector<float>& densities,
 						const std::vector<float>& velocities)
 {
@@ -142,6 +190,8 @@ void Mesh::uploadPoints(const std::vector<float>& positions, const std::vector<f
 	glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
 	glBufferData(GL_ARRAY_BUFFER, positions.size() * sizeof(float), positions.data(),
 				 GL_DYNAMIC_DRAW);
+
+	// Attribute 0: Position
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
 	glEnableVertexAttribArray(0);
 
@@ -150,6 +200,8 @@ void Mesh::uploadPoints(const std::vector<float>& positions, const std::vector<f
 		glBindBuffer(GL_ARRAY_BUFFER, m_vbo2);
 		glBufferData(GL_ARRAY_BUFFER, densities.size() * sizeof(float), densities.data(),
 					 GL_DYNAMIC_DRAW);
+
+		// Attribute 1: Density
 		glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)0);
 		glEnableVertexAttribArray(1);
 	}
@@ -159,6 +211,7 @@ void Mesh::uploadPoints(const std::vector<float>& positions, const std::vector<f
 		glBindBuffer(GL_ARRAY_BUFFER, m_vbo3);
 		glBufferData(GL_ARRAY_BUFFER, velocities.size() * sizeof(float), velocities.data(),
 					 GL_DYNAMIC_DRAW);
+		// Attribute 2: Velocity
 		glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
 		glEnableVertexAttribArray(2);
 	}
@@ -166,6 +219,13 @@ void Mesh::uploadPoints(const std::vector<float>& positions, const std::vector<f
 	glBindVertexArray(0);
 }
 
+/**
+ * @brief Updates existing point cloud buffers with new data.
+ * Assumes the buffers were already allocated with uploadPoints().
+ * @param positions New flat array of point positions.
+ * @param densities Optional new array of density values.
+ * @param velocities Optional new array of velocity vectors.
+ */
 void Mesh::updatePoints(const std::vector<float>& positions, const std::vector<float>& densities,
 						const std::vector<float>& velocities)
 {
@@ -187,6 +247,9 @@ void Mesh::updatePoints(const std::vector<float>& positions, const std::vector<f
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
+/**
+ * @brief Draws all points in the point cloud buffer.
+ */
 void Mesh::drawPoints() const
 {
 	if (!m_vao || m_vertexCount == 0)
@@ -196,6 +259,10 @@ void Mesh::drawPoints() const
 	glBindVertexArray(0);
 }
 
+/**
+ * @brief Draws a specific number of points from the point cloud buffer.
+ * @param count The number of points to render. Clamped to m_vertexCount.
+ */
 void Mesh::drawPoints(GLsizei count) const
 {
 	if (!m_vao || count <= 0 || m_vertexCount == 0)
@@ -207,6 +274,12 @@ void Mesh::drawPoints(GLsizei count) const
 	glBindVertexArray(0);
 }
 
+/**
+ * @brief Creates a static Mesh containing a cube geometry.
+ * @note The method name suggests a triangle, but the vertex and index data
+ * actually build a 3D cube (8 vertices, 36 indices).
+ * @return The generated Mesh.
+ */
 Mesh Mesh::triangle()
 {
 	Mesh m;
@@ -218,6 +291,11 @@ Mesh Mesh::triangle()
 	return m;
 }
 
+/**
+ * @brief Creates a static Mesh containing a flat plane on the XZ axis.
+ * @param s The total width and depth of the plane.
+ * @return The generated Mesh.
+ */
 Mesh Mesh::plane(float s)
 {
 	Mesh  m;
