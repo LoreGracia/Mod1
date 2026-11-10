@@ -33,7 +33,7 @@ class Terrain
 
             const std::vector<float> extractNumbers(const std::string& input);
             void initHooks();
-
+            void initEnv();
 
     public:
         Terrain(const std::string mapPath);

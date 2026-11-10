@@ -23,38 +23,42 @@ const std::vector<float> Terrain::extractNumbers(const std::string& input)
     return numbers;
 }
 
+
 bool Terrain::parse(const std::string& mapath) {
-    const std::string& m = readFile(mapath);
-    if (std::all_of(m.begin(), m.end(), [](char c) {
-        return std::isdigit(static_cast<unsigned char>(c)) \
-        || c == ';' || c == '(' || c == ')' || c == '\n';
-    }))
-		throw std::runtime_error("unexpected token in " + mapath);
+    const std::string m = readFile(mapath);
+
+    if (std::any_of(m.begin(), m.end(), [](char c) {
+        return !std::isdigit(static_cast<unsigned char>(c))
+            && c != ',' && c != '(' && c != ')'
+            && c != '\n';
+    })) {
+        throw std::runtime_error("unexpected token in " + mapath);
+    }
+
     extractNumbers(m);
-    return 0;
+    return true;
 }
 
-// Terrain& Terrain::operator=(Terrain&& t) noexcept
-// {
-//     if (this == &t)
-//         return *this;
+Terrain& Terrain::operator=(Terrain&& t) noexcept
+{
+    if (this == &t)
+        return *this;
 
-//     cam      = std::move(t.cam);
-//     renderer = std::move(t.renderer);
+    cam      = std::move(t.cam);
+    renderer = std::move(t.renderer);
 
-//     shader = std::move(t.shader);
-//     plane  = std::move(t.plane);
+    shader = std::move(t.shader);
+    plane  = std::move(t.plane);
 
-//     rotY = t.rotY;
-//     rotX = t.rotX;
+    rotY = t.rotY;
+    rotX = t.rotX;
 
-//     env = std::move(t.env);
-//     cfg = std::move(t.cfg);
+    cfg = std::move(t.cfg);
 
-//     size = t.size;
-
-//     return *this;
-// }
+    size = t.size;
+    initHooks();
+    return *this;
+}
 
 Terrain::Terrain(const char* arg)
     : Terrain(arg ? std::string(arg) : std::string())
@@ -126,6 +130,30 @@ void Terrain::initHooks()
     });
 }
 
+void Terrain::initEnv() {
+    env.setInit([&](WWindow& w) {
+        shader = std::make_shared<Shader>();
+        if (!shader->loadFromFile(
+                "./src/water/shader/meshVertex.glsl",
+                "./src/water/shader/meshFrag.frag"))
+        {
+            std::fprintf(stderr, "shader failed\n");
+            return;
+        }
+
+        // Plano de 2x2 (lado = 2.0) centrado en el origen.
+        plane = std::make_shared<Mesh>(Mesh::plane(2.0f));
+
+        cam = Camera({3.f, 3.f, 4.f}, {0.f, 0.f, 0.f});
+
+        renderer.depthTest(true);
+        renderer.cullFace(false);
+        renderer.blend(false);
+
+        (void)w;
+    });
+}
+
 Terrain::Terrain(const std::string mapath) {
     if (mapath.empty())
 		throw std::runtime_error("missing path");
@@ -136,27 +164,7 @@ Terrain::Terrain(const std::string mapath) {
         cfg.height      = 700;
         env.addWindow(cfg);
 
-        env.setInit([&](WWindow& w) {
-            shader = std::make_shared<Shader>();
-            if (!shader->loadFromFile(
-                    "./src/water/shader/meshVertex.glsl",
-                    "./src/water/shader/meshFrag.frag"))
-            {
-                std::fprintf(stderr, "shader failed\n");
-                return;
-            }
-
-            // Plano de 2x2 (lado = 2.0) centrado en el origen.
-            plane = std::make_shared<Mesh>(Mesh::plane(2.0f));
-
-            cam = Camera({3.f, 3.f, 4.f}, {0.f, 0.f, 0.f});
-
-            renderer.depthTest(true);
-            renderer.cullFace(false);
-            renderer.blend(false);
-
-            (void)w;
-        });
+        initEnv();
 
         initHooks();
 
