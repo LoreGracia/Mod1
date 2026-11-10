@@ -1,4 +1,9 @@
-#include "core/Environment.hpp"
+/**
+ * @file Environment.cpp
+ * @brief Implementation of the Environment class.
+ */
+
+#include <Environment.hpp>
 
 #ifndef GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_NONE
@@ -10,6 +15,12 @@
 #include <cstdio>
 #include <stdexcept>
 
+/**
+ * @brief Destroys the Environment.
+ *
+ * Ensures the main loop is stopped and cleans up all tracked GPU resources
+ * while a valid OpenGL context is still active.
+ */
 Environment::~Environment()
 {
 	stop();
@@ -19,6 +30,16 @@ Environment::~Environment()
 	}
 }
 
+/**
+ * @brief Adds a new window to the environment.
+ *
+ * If this is not the first window and no specific share context is provided,
+ * it automatically shares the OpenGL context with the first created window.
+ *
+ * @param cfg The configuration parameters for the new window.
+ * @return A reference to the newly created WWindow instance.
+ * @throw std::runtime_error If called after the main loop has started.
+ */
 WWindow& Environment::addWindow(WWindow::Config& cfg)
 {
 	if (m_running.load())
@@ -31,6 +52,19 @@ WWindow& Environment::addWindow(WWindow::Config& cfg)
 	return *m_windows.back();
 }
 
+/**
+ * @brief Starts the main application loop.
+ *
+ * This method performs the following steps:
+ * 1. Makes the first window's context current.
+ * 2. Loads OpenGL functions via GLAD.
+ * 3. Executes the initialization callbacks for all windows.
+ * 4. Enters the main loop, processing window events, calculating delta time,
+ *    and executing update and render callbacks for each active window.
+ * 5. Cleans up resources upon exit.
+ *
+ * @throw std::runtime_error If GLAD fails to load the OpenGL functions.
+ */
 void Environment::run()
 {
 	if (m_windows.empty())
@@ -106,6 +140,11 @@ void Environment::run()
 	cleanupGpuResources();
 }
 
+/**
+ * @brief Clears the list of tracked GPU resources.
+ *
+ * Relies on the shared pointers' destructors to release the underlying OpenGL objects.
+ */
 void Environment::cleanupGpuResources()
 {
 	m_gpuResources.clear();
