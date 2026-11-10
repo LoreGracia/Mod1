@@ -1,3 +1,11 @@
+/**
+ * @file GPUMarchingCubes.cpp
+ * @brief Implementation of the GPUMarchingCubes pipeline.
+ *
+ * Manages the 3D density texture, the two compute shader passes (density
+ * splatting and Marching Cubes), and the indirect draw of the generated mesh.
+ */
+
 #include <GPUMarchingCubes.hpp>
 #include <cstdio>
 #include <gtc/type_ptr.hpp>
@@ -5,35 +13,53 @@
 
 namespace
 {
+/**
+ * @struct GPUVertex
+ * @brief Output vertex structure written by the Marching Cubes compute shader.
+ * Must match the Vertex struct layout in marching_cubes.comp (std430).
+ */
 struct GPUVertex
 {
-	glm::vec4 position;
-	glm::vec4 normal;
+	glm::vec4 position;	 ///< xyz = position, w = 1.0
+	glm::vec4 normal;	 ///< xyz = smooth normal, w = 0.0
 };
 
-// Debe coincidir con GPUParticle de density_splat.comp (std430, 32 bytes).
+/**
+ * @struct GPUParticle
+ * @brief Input particle structure consumed by the density splatting compute shader.
+ * Must match the GPUParticle struct layout in density_splat.comp (std430, 32 bytes).
+ */
 struct GPUParticle
 {
-	glm::vec4 posWeight;  // xyz = posición, w = splatWeight
-	glm::vec4 velAge;	  // xyz = velocidad,  w = edad
+	glm::vec4 posWeight;  ///< xyz = position, w = splatWeight
+	glm::vec4 velAge;	  ///< xyz = velocity, w = age
 };
 }  // namespace
 
-// ─────────────────────────────────────────────────────────────────────
-// Constructores / destructor
-// ─────────────────────────────────────────────────────────────────────
-
+/** @brief Default constructor. */
 GPUMarchingCubes::GPUMarchingCubes() = default;
 
+/** @brief Destructor. Ensures all GL resources are released. */
 GPUMarchingCubes::~GPUMarchingCubes()
 {
 	release();
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// init: carga shaders + crea buffers
-// ─────────────────────────────────────────────────────────────────────
-
+/**
+ * @brief Initializes the Marching Cubes pipeline.
+ *
+ * Loads the three required shaders (splat, compute/MC, mesh rendering),
+ * validates the grid resolution, and allocates all necessary GPU resources.
+ *
+ * @param boundsMin The minimum world-space bound of the simulation grid.
+ * @param boundsMax The maximum world-space bound of the simulation grid.
+ * @param resolution The voxel resolution per axis.
+ * @param splatPath Path to the density splatting compute shader.
+ * @param computePath Path to the Marching Cubes compute shader.
+ * @param vertPath Path to the mesh vertex shader.
+ * @param fragPath Path to the mesh fragment shader.
+ * @return True if all shaders compiled and buffers were created successfully.
+ */
 bool GPUMarchingCubes::init(const glm::vec3& boundsMin, const glm::vec3& boundsMax, int resolution,
 							const std::string& splatPath, const std::string& computePath,
 							const std::string& vertPath, const std::string& fragPath)
@@ -52,19 +78,19 @@ bool GPUMarchingCubes::init(const glm::vec3& boundsMin, const glm::vec3& boundsM
 	m_gridSize	  = glm::ivec3(resolution, resolution, resolution);
 	m_densitySize = m_gridSize + glm::ivec3(1);
 
-	// Cargar compute shader de splatting (density_splat.comp)
+	// Load the density splatting compute shader (density_splat.comp)
 	if (!m_splatShader.loadComputeFromFile(splatPath)) {
 		std::fprintf(stderr, "GPUMarchingCubes: failed to load '%s'\n", splatPath.c_str());
 		return false;
 	}
 
-	// Cargar compute shader (marching_cubes.comp)
+	// Load the Marching Cubes compute shader (marching_cubes.comp)
 	if (!m_computeShader.loadComputeFromFile(computePath)) {
 		std::fprintf(stderr, "GPUMarchingCubes: failed to load '%s'\n", computePath.c_str());
 		return false;
 	}
 
-	// Cargar shaders de renderizado de la malla
+	// Load the mesh rendering shaders
 	if (!m_meshShader.loadFromFile(vertPath, fragPath)) {
 		std::fprintf(stderr, "GPUMarchingCubes: failed to load '%s' or '%s'\n", vertPath.c_str(),
 					 fragPath.c_str());
@@ -82,22 +108,24 @@ bool GPUMarchingCubes::init(const glm::vec3& boundsMin, const glm::vec3& boundsM
 	return true;
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// createBuffers: SSBOs + textura 3D de densidad + VAO "vacío"
-// ─────────────────────────────────────────────────────────────────────
-
+/**
+ * @brief Allocates all OpenGL buffers, textures, and vertex array objects.
+ *
+ * Creates the particle SSBO, vertex SSBO, draw command SSBO, the 3D density
+ * texture, and configures the empty VAO for vertex pulling.
+ */
 void GPUMarchingCubes::createBuffers()
 {
-	// ── 1. Particle SSBO (binding 0 del splat) ─────────────────────
-	// Capacidad inicial: 4096 partículas. Crece en uploadParticles() si
-	// el vector es mayor; nunca decrece (evita reallocaciones).
+	// ── 1. Particle SSBO (binding 0 of the splat shader) ────────────
+	// Initial capacity: 4096 particles. Grows in uploadParticles() if
+	// the vector is larger; never shrinks (avoids reallocations).
 	m_maxParticles = 4096;
 	glGenBuffers(1, &m_particleSSBO);
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_particleSSBO);
 	glBufferData(GL_SHADER_STORAGE_BUFFER, m_maxParticles * sizeof(GPUParticle), nullptr,
 				 GL_DYNAMIC_DRAW);
 
-	// ── 2. Vertex SSBO (binding 1) — peor caso 15 verts/voxel ───────
+	// ── 2. Vertex SSBO (binding 1) — worst case 15 verts/voxel ──────
 	m_maxVertices = static_cast<GLuint>(m_gridSize.x) * static_cast<GLuint>(m_gridSize.y) *
 					static_cast<GLuint>(m_gridSize.z) * 15u;
 
@@ -109,13 +137,13 @@ void GPUMarchingCubes::createBuffers()
 
 	// ── 3. Draw command SSBO (binding 2) ────────────────────────────
 	// { vertexCount, instanceCount, firstVertex, baseInstance }
-	// Lo reinicia density_splat.comp y lo incrementa marching_cubes.comp.
+	// Reset by density_splat.comp and incremented by marching_cubes.comp.
 	glGenBuffers(1, &m_drawCmdSSBO);
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_drawCmdSSBO);
 	const GLuint drawCmdInit[4] = {0u, 1u, 0u, 0u};
 	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(drawCmdInit), drawCmdInit, GL_DYNAMIC_DRAW);
 
-	// ── 4. Textura 3D de densidad (R32UI, N+1 por eje) ──────────────
+	// ── 4. 3D Density Texture (R32UI, N+1 per axis) ─────────────────
 	glGenTextures(1, &m_densityTex);
 	glBindTexture(GL_TEXTURE_3D, m_densityTex);
 	glTexStorage3D(GL_TEXTURE_3D, 1, GL_R32UI, m_densitySize.x, m_densitySize.y, m_densitySize.z);
@@ -126,10 +154,10 @@ void GPUMarchingCubes::createBuffers()
 	glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 	glBindTexture(GL_TEXTURE_3D, 0);
 
-	// ── 5. VAO "vacío" para leer el vertex SSBO como atributo ───────
-	// El VAO guarda el binding entre attrib 0 y el buffer. Aunque el
-	// contenido cambie por el compute, el ID del buffer no cambia,
-	// así que este binding sigue siendo válido en cada draw.
+	// ── 5. "Empty" VAO to read the vertex SSBO as attributes ────────
+	// The VAO stores the binding between the attributes and the buffer.
+	// Although the content changes due to compute, the buffer ID does not,
+	// so this binding remains valid for every draw call.
 	glGenVertexArrays(1, &m_emptyVAO);
 	glBindVertexArray(m_emptyVAO);
 	glBindBuffer(GL_ARRAY_BUFFER, m_vertexSSBO);
@@ -140,15 +168,20 @@ void GPUMarchingCubes::createBuffers()
 	glEnableVertexAttribArray(1);
 	glBindVertexArray(0);
 
-	// Limpieza de bindings
+	// Cleanup bindings
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// uploadParticles: sube posiciones al SSBO de entrada
-// ─────────────────────────────────────────────────────────────────────
-
+/**
+ * @brief Uploads the CPU particle data to the GPU particle SSBO.
+ *
+ * Packs the particle data into the GPUParticle struct (posWeight and velAge)
+ * and uploads it. Reallocates the SSBO if the particle count exceeds the
+ * current capacity.
+ *
+ * @param particles A vector containing the current CPU particles.
+ */
 void GPUMarchingCubes::uploadParticles(const std::vector<Particle>& particles)
 {
 	if (!m_initialized)
@@ -158,7 +191,7 @@ void GPUMarchingCubes::uploadParticles(const std::vector<Particle>& particles)
 	if (particles.empty())
 		return;
 
-	// ¿Hace falta reasignar el SSBO?
+	// Reallocation check
 	const GLuint needed = static_cast<GLuint>(particles.size());
 	if (needed > m_maxParticles) {
 		GLuint newCap = m_maxParticles;
@@ -171,8 +204,8 @@ void GPUMarchingCubes::uploadParticles(const std::vector<Particle>& particles)
 					 GL_DYNAMIC_DRAW);
 	}
 
-	// Empaquetar posición + splatWeight y velocidad + edad. El shader
-	// declara el SSBO como GPUParticle para respetar el alignment de vec4.
+	// Pack position + splatWeight and velocity + age. The shader declares
+	// the SSBO as GPUParticle to respect the vec4 alignment.
 	std::vector<GPUParticle> staging(particles.size());
 	for (size_t i = 0; i < particles.size(); ++i) {
 		staging[i].posWeight = glm::vec4(particles[i].position, particles[i].splatWeight);
@@ -185,10 +218,14 @@ void GPUMarchingCubes::uploadParticles(const std::vector<Particle>& particles)
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// generateMesh: splat de densidad → Marching Cubes → comando indirecto
-// ─────────────────────────────────────────────────────────────────────
-
+/**
+ * @brief Executes the full mesh generation pipeline on the GPU.
+ *
+ * 1. Clears the 3D density texture (essential to prevent accumulation).
+ * 2. Runs the density splatting compute shader (particles -> texture).
+ * 3. Runs the Marching Cubes compute shader (texture -> vertex SSBO).
+ * Inserts the necessary memory barriers between passes.
+ */
 void GPUMarchingCubes::generateMesh()
 {
 	if (!m_initialized)
@@ -196,11 +233,11 @@ void GPUMarchingCubes::generateMesh()
 
 	constexpr GLuint kSplatGroup = 64u;
 
-	// ── 1. Limpiar la textura 3D de densidad a 0 ───────────────────
-	// CRÍTICO: sin este clear los imageAtomicAdd se acumulan frame tras
-	// frame y todo el volumen acaba superando el iso → cubo sólido.
-	// Si GL_ARB_clear_texture no está disponible, se sube un bloque de
-	// ceros con glTexSubImage3D (fallback portable).
+	// ── 1. Clear the 3D density texture to 0 ───────────────────────
+	// CRITICAL: without this clear, imageAtomicAdds accumulate frame after
+	// frame and the entire volume eventually exceeds the iso-level -> solid cube.
+	// If GL_ARB_clear_texture is unavailable, upload a zero block using
+	// glTexSubImage3D (portable fallback).
 	if (glad_glClearTexImage != nullptr) {
 		const GLuint zero = 0u;
 		glClearTexImage(m_densityTex, 0, GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
@@ -214,10 +251,10 @@ void GPUMarchingCubes::generateMesh()
 						m_densitySize.z, GL_RED_INTEGER, GL_UNSIGNED_INT, zeros.data());
 		glBindTexture(GL_TEXTURE_3D, 0);
 	}
-	// Hacer visible el clear al pase de splatting (imageAtomicAdd).
+	// Make the clear visible to the splatting pass (imageAtomicAdd).
 	glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
-	// ── 2. Pase de splatting: partículas → textura 3D ──────────────
+	// ── 2. Splatting pass: particles -> 3D texture ─────────────────
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, m_particleSSBO);
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, m_drawCmdSSBO);
 	glBindImageTexture(0, m_densityTex, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
@@ -237,13 +274,13 @@ void GPUMarchingCubes::generateMesh()
 
 	GLuint splatGroups = (m_particleCount + kSplatGroup - 1u) / kSplatGroup;
 	if (splatGroups == 0u)
-		splatGroups = 1u;  // al menos 1 para resetear el comando
+		splatGroups = 1u;  // at least 1 to reset the command
 	m_splatShader.dispatch(splatGroups, 1, 1);
 
-	// Textura escrita como imagen + draw command reiniciado por el shader.
+	// Texture written as image + draw command reset by the shader.
 	glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT);
 
-	// ── 3. Marching Cubes: lee la textura y escribe vértices ───────
+	// ── 3. Marching Cubes: reads texture and writes vertices ───────
 	glBindImageTexture(0, m_densityTex, 0, GL_TRUE, 0, GL_READ_ONLY, GL_R32UI);
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, m_vertexSSBO);
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, m_drawCmdSSBO);
@@ -259,14 +296,16 @@ void GPUMarchingCubes::generateMesh()
 									static_cast<GLuint>(m_gridSize.y),
 									static_cast<GLuint>(m_gridSize.z), 4, 4, 4);
 
-	// Vértices listos para el VAO y comando listo para el draw indirecto.
+	// Vertices ready for the VAO and command ready for indirect draw.
 	glMemoryBarrier(GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT | GL_COMMAND_BARRIER_BIT);
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// debugReadDrawCount: readback puntual para depuración (rompe el pipeline)
-// ─────────────────────────────────────────────────────────────────────
-
+/**
+ * @brief Reads the generated vertex count from the GPU draw command buffer.
+ * @note This introduces a synchronous CPU-GPU stall and should ONLY be used
+ * for debugging purposes, never in the hot path.
+ * @return The current vertex count.
+ */
 GLuint GPUMarchingCubes::debugReadDrawCount() const
 {
 	GLuint count = 0;
@@ -279,9 +318,16 @@ GLuint GPUMarchingCubes::debugReadDrawCount() const
 	return count;
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// render: dibuja usando el comando generado en GPU (sin readback)
-// ─────────────────────────────────────────────────────────────────────
+/**
+ * @brief Renders the generated Marching Cubes mesh.
+ *
+ * Uses glDrawArraysIndirect with the draw command populated entirely on the GPU.
+ * Sets up the required rendering uniforms (lighting, camera, water colors).
+ *
+ * @param viewProj The combined view-projection matrix.
+ * @param cameraPos The world-space position of the camera.
+ * @param time The current application time (for wave animation).
+ */
 void GPUMarchingCubes::render(const glm::mat4& viewProj, const glm::vec3& cameraPos, float time)
 {
 	if (!m_initialized)
@@ -305,22 +351,22 @@ void GPUMarchingCubes::render(const glm::mat4& viewProj, const glm::vec3& camera
 	glBindVertexArray(0);
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// setBounds: cambia la AABB sin reasignar buffers
-// ─────────────────────────────────────────────────────────────────────
-
+/**
+ * @brief Updates the world-space bounds of the simulation grid.
+ * @param lo The new minimum bound.
+ * @param hi The new maximum bound.
+ */
 void GPUMarchingCubes::setBounds(const glm::vec3& lo, const glm::vec3& hi)
 {
 	m_boundsMin = lo;
 	m_boundsMax = hi;
-	// m_gridSize no cambia → el vertex SSBO mantiene su tamaño.
-	// Solo los uniforms uGridMin/uGridMax se actualizarán en el próximo dispatch.
+	// m_gridSize does not change -> the vertex SSBO keeps its size.
+	// Only the uGridMin/uGridMax uniforms will update on the next dispatch.
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// release: libera todos los recursos GL (idempotente)
-// ─────────────────────────────────────────────────────────────────────
-
+/**
+ * @brief Releases all allocated OpenGL resources.
+ */
 void GPUMarchingCubes::release()
 {
 	if (m_particleSSBO) {
