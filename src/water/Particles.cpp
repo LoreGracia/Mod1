@@ -1,3 +1,12 @@
+/**
+ * @file Particles.cpp
+ * @brief Implementation of the SPH (Smoothed Particle Hydrodynamics) simulation.
+ *
+ * Handles the CPU-based physics (density, pressure, viscosity, XSPH), spatial
+ * hashing for neighbor search, boundary collisions, rain recycling, and
+ * data preparation for the GPU rendering pipeline.
+ */
+
 #include <Particles.hpp>
 #include <Shader.hpp>
 #include <algorithm>
@@ -10,9 +19,14 @@ namespace
 
 constexpr float PI = 3.14159265358979323846f;
 
-// ── Kernels SPH ─────────────────────────────────────────────────────
-
-// Poly6: densidad. W(r) = 315/(64π h⁹) (h² - r²)³
+/**
+ * @brief Poly6 kernel for density calculation.
+ * W(r) = 315/(64 * pi * h^9) * (h^2 - r^2)^3
+ * @param r2 Squared distance between particles.
+ * @param h Smoothing radius.
+ * @param h2 Squared smoothing radius.
+ * @return The kernel value.
+ */
 float kernelPoly6(float r2, float h, float h2)
 {
 	if (r2 >= h2)
@@ -21,7 +35,13 @@ float kernelPoly6(float r2, float h, float h2)
 	return 315.f / (64.f * PI * std::pow(h, 9.f)) * diff * diff * diff;
 }
 
-// Spiky gradient magnitude. F(r) = -45/(π h⁶) (h - r)²
+/**
+ * @brief Spiky kernel gradient magnitude for pressure forces.
+ * F(r) = -45/(pi * h^6) * (h - r)^2
+ * @param r Distance between particles.
+ * @param h Smoothing radius.
+ * @return The gradient magnitude.
+ */
 float kernelSpikyGrad(float r, float h)
 {
 	if (r >= h || r < 1e-6f)
@@ -30,7 +50,13 @@ float kernelSpikyGrad(float r, float h)
 	return -45.f / (PI * std::pow(h, 6.f)) * diff * diff;
 }
 
-// Laplacian (viscosidad). ∇²W(r) = 45/(π h⁶) (h - r)
+/**
+ * @brief Laplacian kernel for viscosity forces.
+ * Laplacian W(r) = 45/(pi * h^6) * (h - r)
+ * @param r Distance between particles.
+ * @param h Smoothing radius.
+ * @return The Laplacian value.
+ */
 float kernelLaplacian(float r, float h)
 {
 	if (r >= h)
@@ -40,16 +66,27 @@ float kernelLaplacian(float r, float h)
 
 }  // namespace
 
-Particles::Particles()	= default;
+/** @brief Default constructor. */
+Particles::Particles() = default;
+
+/** @brief Default destructor. */
 Particles::~Particles() = default;
 
-// ── Spatial hashing ─────────────────────────────────────────────────
-
+/**
+ * @brief Computes the spatial hash grid cell for a given position.
+ * @param p The particle position.
+ * @return The 3D integer coordinates of the cell.
+ */
 glm::ivec3 Particles::cellOf(const glm::vec3& p) const
 {
 	return glm::ivec3(glm::floor(p / m_cfg.h));
 }
 
+/**
+ * @brief Computes a unique hash key for a 3D grid cell.
+ * @param c The 3D cell coordinates.
+ * @return The hashed integer key.
+ */
 int64_t Particles::hashCell(const glm::ivec3& c) const
 {
 	constexpr int64_t p1 = 73856093;
@@ -58,6 +95,9 @@ int64_t Particles::hashCell(const glm::ivec3& c) const
 	return (int64_t(c.x) * p1) ^ (int64_t(c.y) * p2) ^ (int64_t(c.z) * p3);
 }
 
+/**
+ * @brief Builds the spatial hash map for the current particle positions.
+ */
 void Particles::buildHash()
 {
 	m_hash.clear();
@@ -66,6 +106,12 @@ void Particles::buildHash()
 		m_hash[hashCell(cellOf(m_particles[i].position))].push_back(i);
 }
 
+/**
+ * @brief Iterates over all valid neighbors of a particle within the smoothing radius.
+ * @tparam Fn The callback function type.
+ * @param i Index of the particle to find neighbors for.
+ * @param fn The function to execute for each neighbor index `j`.
+ */
 template <typename Fn> void Particles::forEachNeighbor(size_t i, Fn&& fn) const
 {
 	glm::ivec3 c = cellOf(m_particles[i].position);
@@ -83,17 +129,18 @@ template <typename Fn> void Particles::forEachNeighbor(size_t i, Fn&& fn) const
 			}
 }
 
-// ── SPH ─────────────────────────────────────────────────────────────
-
+/**
+ * @brief Performs a single SPH physics step (density, pressure, forces, XSPH).
+ * @param dt Delta time for the step.
+ * @note buildHash() is NOT called here; it must be called externally once per frame.
+ */
 void Particles::stepSPH(float dt)
 {
 	const float	 h	= m_cfg.h;
 	const float	 h2 = h * h;
 	const size_t n	= m_particles.size();
 
-	// ¡OJO! Aquí ya NO llamamos a buildHash()
-
-	// 1. Densidad y presión
+	// 1. Density and pressure computation.
 	for (size_t i = 0; i < n; ++i) {
 		Particle& pi	  = m_particles[i];
 		float	  density = 0.f;
@@ -103,20 +150,19 @@ void Particles::stepSPH(float dt)
 		});
 		pi.density = std::max(density, m_cfg.restDensity * 0.1f);
 
-		// ── FIX: CALCULAR LA PRESIÓN ──
+		// Calculate pressure.
 		pi.pressure = m_cfg.stiffness * (pi.density - m_cfg.restDensity);
 
-		// CLAVE: Evitar inestabilidad de tracción (Tensile Instability).
-		// Fase 5: cohesión más débil => el agua se extiende y aplana en vez
-		// de formar grumos tipo gelatina.
+		// KEY: Prevent tensile instability.
+		// Phase 5: Weaker cohesion => water spreads and flattens instead
+		// of forming gelatinous clumps.
 		float minPressure = -0.002f * m_cfg.stiffness;
 		pi.pressure		  = std::max(pi.pressure, minPressure);
-		// pi.pressure = std::max(pi.pressure, 0.f);
 
 		pi.force = glm::vec3(0.f, m_cfg.gravity, 0.f);
 	}
 
-	// 2. Fuerzas (presión + viscosidad) -> igual que lo tenías
+	// 2. Forces (pressure + viscosity).
 	for (size_t i = 0; i < n; ++i) {
 		Particle& pi = m_particles[i];
 		glm::vec3 fPress{0.f};
@@ -137,8 +183,9 @@ void Particles::stepSPH(float dt)
 		});
 		pi.force += fPress + fVisc;
 	}
-	// 3. XSPH: suavizado de velocidad normalizado. Elimina el "jitter" y
-	// los grumos sin añadir viscosidad artificial excesiva (Fase 5).
+
+	// 3. XSPH: normalized velocity smoothing. Removes jitter and clumps
+	// without adding excessive artificial viscosity (Phase 5).
 	const float xsph = 0.10f;
 	for (size_t i = 0; i < n; ++i) {
 		Particle& pi = m_particles[i];
@@ -159,33 +206,30 @@ void Particles::stepSPH(float dt)
 	}
 	(void)dt;
 }
-// void Particles::integrate(float dt)
-// {
-//     for (auto& p : m_particles) {
-//         p.velocity += p.force * dt;      // Euler semi-implícito
-//         p.velocity *= m_cfg.damping;
-//         p.position += p.velocity * dt;
-//         p.age      += dt;
-//     }
-// }
+
+/**
+ * @brief Integrates the particle positions using semi-implicit Euler.
+ * @param dt Delta time.
+ */
 void Particles::integrate(float dt)
 {
 	for (auto& p : m_particles) {
-		p.velocity += p.force * dt;	 // Euler semi-implícito
+		p.velocity += p.force * dt;	 // Semi-implicit Euler
 		p.velocity *= m_cfg.damping;
 
-		// ── LÍMITE DE VELOCIDAD (Evita que exploten y desaparezcan) ──
 		float speed = glm::length(p.velocity);
 		if (speed > 10.0f) {
-			p.velocity = (p.velocity / speed) * 10.0f;
+			p.velocity = (p.velocity / speed) * 10.0f;	// Clamp maximum speed
 		}
-		// ─────────────────────────────────────────────────────────────
 
 		p.position += p.velocity * dt;
 		p.age += dt;
 	}
 }
 
+/**
+ * @brief Handles collisions with the ground (or terrain) and boundary walls.
+ */
 void Particles::collide()
 {
 	const glm::vec3 lo = m_cfg.boundsMin;
@@ -193,7 +237,7 @@ void Particles::collide()
 	const float		e  = m_cfg.wallRestitution;
 
 	for (auto& p : m_particles) {
-		// Suelo (terreno o plano en lo.y)
+		// Ground collision (terrain or flat plane at lo.y)
 		const float ground = m_heightFn ? m_heightFn(p.position.x, p.position.z) : lo.y;
 		if (p.position.y < ground) {
 			p.position.y = ground;
@@ -203,7 +247,7 @@ void Particles::collide()
 			p.velocity.z *= 0.98f;
 		}
 
-		// Paredes del contenedor
+		// Container walls
 		if (p.position.x < lo.x) {
 			p.position.x = lo.x;
 			p.velocity.x = -p.velocity.x * e;
@@ -227,6 +271,9 @@ void Particles::collide()
 	}
 }
 
+/**
+ * @brief Recycles rain drops that have hit the ground by respawning them at the top.
+ */
 void Particles::recycleRain()
 {
 	const float ground = m_cfg.boundsMin.y;
@@ -240,6 +287,14 @@ void Particles::recycleRain()
 	}
 }
 
+/**
+ * @brief Main update loop for the particle simulation.
+ *
+ * Executes the physics substeps, classifies particles for the GPU hybrid
+ * rendering (puddle vs. falling drops), and updates the rendering buffers.
+ *
+ * @param dt Delta time since the last frame.
+ */
 void Particles::update(float dt)
 {
 	if (m_particles.empty())
@@ -258,15 +313,16 @@ void Particles::update(float dt)
 			recycleRain();
 	}
 
-	// Buffers para GPU + clasificación del agua híbrida.
-	// En Rain: gotas rápidas o en la banda superior -> solo puntos.
-	// Agua lenta (charco) -> splatWeight = 1 -> Marching Cubes.
+	// GPU buffers + hybrid water classification.
+	// In Rain: fast drops or in the upper band -> points only.
+	// Slow water (puddle) -> splatWeight = 1 -> Marching Cubes.
 	const bool	rain = (m_mode == Mode::Rain);
 	const float airY = m_cfg.boundsMax.y - m_cfg.rainAirBand;
 	m_fallCount		 = 0;
-	// Fase 5: superficie real del charco = mayor Y de las partículas que
-	// sí aportan densidad (no aéreas). Se usa para ocultar gotas justo a
-	// la altura del iso, no con un umbral fijo.
+
+	// Phase 5: Real puddle surface = max Y of particles that contribute
+	// to density (non-airborne). Used to hide drops exactly at the iso-level,
+	// rather than using a fixed threshold.
 	float puddleTop = m_cfg.boundsMin.y;
 
 	for (size_t i = 0; i < m_particles.size(); ++i) {
@@ -301,7 +357,7 @@ void Particles::update(float dt)
 	if (rain)
 		m_fallMesh.updatePoints(m_fallPositions, m_fallDensities, m_fallVelocities);
 
-	// Debug: cada 30 frames
+	// Debug: every 30 frames
 	if (++m_debugCounter % 30 == 0) {
 		float avg = 0.f;
 		for (const auto& p : m_particles)
@@ -311,8 +367,12 @@ void Particles::update(float dt)
 	}
 }
 
-// ── Spawn ───────────────────────────────────────────────────────────
-
+/**
+ * @brief Spawns/resets a single particle based on the simulation mode.
+ * @param p Reference to the particle to initialize.
+ * @param mode The current simulation mode.
+ * @param initial True if this is the initial spawn, false if it's a recycled drop.
+ */
 void Particles::spawnOne(Particle& p, Mode mode, bool initial)
 {
 	static std::mt19937					  rng(0xC0FFEE);
@@ -350,6 +410,10 @@ void Particles::spawnOne(Particle& p, Mode mode, bool initial)
 	p.splatWeight = 1.f;
 }
 
+/**
+ * @brief Spawns all particles based on the specified mode.
+ * @param mode The simulation mode.
+ */
 void Particles::spawnAll(Mode mode)
 {
 	m_fallCount = 0;
@@ -368,13 +432,22 @@ void Particles::spawnAll(Mode mode)
 	m_densities.assign(m_particles.size(), m_cfg.restDensity);
 }
 
-// ── Init / Reset ────────────────────────────────────────────────────
-
+/**
+ * @brief Initializes the simulation with a specified number of particles.
+ * @param count Number of particles.
+ * @param mode The initial simulation mode.
+ */
 void Particles::init(size_t count, Mode mode)
 {
-	init(count, mode, m_cfg);  // usa el config actual (setConfig o defaults)
+	init(count, mode, m_cfg);  // uses current config (setConfig or defaults)
 }
 
+/**
+ * @brief Initializes the simulation with a specific configuration.
+ * @param count Number of particles.
+ * @param mode The initial simulation mode.
+ * @param cfg The configuration to use.
+ */
 void Particles::init(size_t count, Mode mode, const Config& cfg)
 {
 	m_cfg		   = cfg;
@@ -395,6 +468,10 @@ void Particles::init(size_t count, Mode mode, const Config& cfg)
 	m_fallMesh.uploadPoints(m_fallPositions, m_fallDensities, m_fallVelocities);
 }
 
+/**
+ * @brief Resets the simulation to its initial state.
+ * @param mode The simulation mode to reset to.
+ */
 void Particles::reset(Mode mode)
 {
 	m_mode = mode;
@@ -402,13 +479,17 @@ void Particles::reset(Mode mode)
 	m_mesh.updatePoints(m_positions, m_densities);
 }
 
-// ── GPU ─────────────────────────────────────────────────────────────
-
+/** @brief Uploads the particle position and density data to the GPU. */
 void Particles::uploadToGPU()
 {
 	m_mesh.updatePoints(m_positions, m_densities);
 }
 
+/**
+ * @brief Renders all particles using the provided shader.
+ * @param shader The shader to use for rendering.
+ * @param viewProj The combined view-projection matrix.
+ */
 void Particles::render(Shader& shader, const glm::mat4& viewProj)
 {
 	shader.use();
@@ -424,6 +505,11 @@ void Particles::render(Shader& shader, const glm::mat4& viewProj)
 	m_mesh.drawPoints();
 }
 
+/**
+ * @brief Renders only the airborne rain drops.
+ * @param shader The shader to use for rendering.
+ * @param viewProj The combined view-projection matrix.
+ */
 void Particles::renderRainDrops(Shader& shader, const glm::mat4& viewProj)
 {
 	if (m_fallCount == 0)
@@ -437,9 +523,9 @@ void Particles::renderRainDrops(Shader& shader, const glm::mat4& viewProj)
 	shader.setFloat("uAlpha", m_cfg.rainAlpha);
 	shader.setFloat("uDensityMin", m_cfg.restDensity * 0.9f);
 	shader.setFloat("uDensityMax", m_cfg.restDensity * 1.3f);
-	// Fase 5: umbral dinámico pegado a la superficie real del charco.
-	// Las gotas que caen por debajo de esa altura se ocultan (si están en
-	// reposo); las salpicaduras siguen visibles gracias a uSplashSpeed.
+	// Phase 5: dynamic threshold locked to the real puddle surface.
+	// Drops falling below this height are hidden (if at rest); splashes
+	// remain visible thanks to uSplashSpeed.
 	shader.setFloat("uHideBelowY", m_puddleTopY + m_cfg.rainHideMargin);
 	shader.setFloat("uSplashSpeed", m_cfg.rainSplashSpeed);
 	m_fallMesh.drawPoints(static_cast<GLsizei>(m_fallCount));
