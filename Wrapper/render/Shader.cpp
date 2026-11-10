@@ -130,58 +130,60 @@ GLint Shader::location(const char* name) const
 
 bool Shader::loadComputeFromSource(const std::string& computeSrc)
 {
-    GLuint cs = compile(GL_COMPUTE_SHADER, computeSrc);
-    if (!cs) return false;
+	GLuint cs = compile(GL_COMPUTE_SHADER, computeSrc);
+	if (!cs)
+		return false;
 
-    if (m_program) glDeleteProgram(m_program);
-    m_program = glCreateProgram();
-    glAttachShader(m_program, cs);
-    glLinkProgram(m_program);
-    glDeleteShader(cs);   // el shader ya está linkado, liberar
+	if (m_program)
+		glDeleteProgram(m_program);
+	m_program = glCreateProgram();
+	glAttachShader(m_program, cs);
+	glLinkProgram(m_program);
+	glDeleteShader(cs);	 // el shader ya está linkado, liberar
 
-    GLint ok = 0;
-    glGetProgramiv(m_program, GL_LINK_STATUS, &ok);
-    if (!ok) {
-        GLint len = 0;
-        glGetProgramiv(m_program, GL_INFO_LOG_LENGTH, &len);
-        std::vector<char> log(len);
-        glGetProgramInfoLog(m_program, len, nullptr, log.data());
-        std::cerr << "Compute program link error:\n" << log.data() << "\n";
-        glDeleteProgram(m_program);
-        m_program = 0;
-        return false;
-    }
-    m_uniformCache.clear();
-    return true;
+	GLint ok = 0;
+	glGetProgramiv(m_program, GL_LINK_STATUS, &ok);
+	if (!ok) {
+		GLint len = 0;
+		glGetProgramiv(m_program, GL_INFO_LOG_LENGTH, &len);
+		std::vector<char> log(len);
+		glGetProgramInfoLog(m_program, len, nullptr, log.data());
+		std::cerr << "Compute program link error:\n" << log.data() << "\n";
+		glDeleteProgram(m_program);
+		m_program = 0;
+		return false;
+	}
+	m_uniformCache.clear();
+	return true;
 }
 
 bool Shader::loadComputeFromFile(const std::string& computePath)
 {
-    try { return loadComputeFromSource(readFile(computePath)); }
-    catch (const std::exception& e) {
-        std::cerr << e.what() << "\n";
-        return false;
-    }
+	try {
+		return loadComputeFromSource(readFile(computePath));
+	} catch (const std::exception& e) {
+		std::cerr << e.what() << "\n";
+		return false;
+	}
 }
 
 void Shader::dispatch(GLuint groupsX, GLuint groupsY, GLuint groupsZ) const
 {
-    glUseProgram(m_program);
-    glDispatchCompute(groupsX, groupsY, groupsZ);
-    // NO hacemos glMemoryBarrier aquí: el caller sabe qué va a leer
-    // y con qué bits. Hacerlo aquí con un barrier "universal" sería caro.
+	glUseProgram(m_program);
+	glDispatchCompute(groupsX, groupsY, groupsZ);
+	// NO hacemos glMemoryBarrier aquí: el caller sabe qué va a leer
+	// y con qué bits. Hacerlo aquí con un barrier "universal" sería caro.
 }
 
-void Shader::dispatchForGrid(GLuint gridX, GLuint gridY, GLuint gridZ,
-                             GLuint localX, GLuint localY, GLuint localZ) const
+void Shader::dispatchForGrid(GLuint gridX, GLuint gridY, GLuint gridZ, GLuint localX, GLuint localY,
+							 GLuint localZ) const
 {
-    // redondeo hacia arriba: ceil(grid / local)
-    GLuint gx = (gridX + localX - 1) / localX;
-    GLuint gy = (gridY + localY - 1) / localY;
-    GLuint gz = (gridZ + localZ - 1) / localZ;
-    dispatch(gx, gy, gz);
+	// redondeo hacia arriba: ceil(grid / local)
+	GLuint gx = (gridX + localX - 1) / localX;
+	GLuint gy = (gridY + localY - 1) / localY;
+	GLuint gz = (gridZ + localZ - 1) / localZ;
+	dispatch(gx, gy, gz);
 }
-
 
 
 void Shader::setInt(const char* n, int v) const
@@ -205,6 +207,7 @@ void Shader::setMat4(const char* n, const glm::mat4& m) const
 	glUniformMatrix4fv(location(n), 1, GL_FALSE, glm::value_ptr(m));
 }
 
-void Shader::setIVec3(const char* name, const glm::ivec3& v) const {
-    glUniform3i(location(name), v.x, v.y, v.z);
+void Shader::setIVec3(const char* name, const glm::ivec3& v) const
+{
+	glUniform3i(location(name), v.x, v.y, v.z);
 }

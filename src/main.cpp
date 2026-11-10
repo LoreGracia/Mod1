@@ -10,8 +10,11 @@
 #include <Camera.hpp>
 #include <Entity.hpp>
 #include <Environment.hpp>
+#include <GPUMarchingCubes.hpp>
 #include <Input.hpp>
 #include <Mesh.hpp>
+#include <Particle.hpp>
+#include <Particles.hpp>
 #include <Renderer.hpp>
 #include <Shader.hpp>
 #include <WWindow.hpp>
@@ -23,81 +26,74 @@
 #include <memory>
 #include <scene/Transform.hpp>
 #include <vector>
-#include <Particle.hpp>
-#include <Particles.hpp>
-#include <GPUMarchingCubes.hpp>
 
-int main() {
-    try {
-        Environment env;
+int main()
+{
+	try {
+		Environment env;
 
-        WWindow::Config cfg;
-        cfg.title       = "SPH Water — 1=rise 2=wave 3=rain  R=reset  Esc=close";
-        cfg.width       = 1000;
-        cfg.height      = 700;
-        cfg.glMajor     = 4;
-        cfg.glMinor     = 3;
-        cfg.coreProfile = true;
-        cfg.vsync       = true;
-        env.addWindow(cfg);
+		WWindow::Config cfg;
+		cfg.title		= "SPH Water — 1=rise 2=wave 3=rain  R=reset  Esc=close";
+		cfg.width		= 1000;
+		cfg.height		= 700;
+		cfg.glMajor		= 4;
+		cfg.glMinor		= 3;
+		cfg.coreProfile = true;
+		cfg.vsync		= true;
+		env.addWindow(cfg);
 
-        struct State {
-            Camera   cam;
-            Renderer renderer;
-            std::shared_ptr<Shader>   shader;
-            std::shared_ptr<Particles> water;
-            std::shared_ptr<GPUMarchingCubes> marchingCubes;
-            Particles::Mode mode = Particles::Mode::UniformRise;
-            float time = 0.f;
-        } st;
+		struct State
+		{
+			Camera							  cam;
+			Renderer						  renderer;
+			std::shared_ptr<Shader>			  shader;
+			std::shared_ptr<Particles>		  water;
+			std::shared_ptr<GPUMarchingCubes> marchingCubes;
+			Particles::Mode					  mode = Particles::Mode::UniformRise;
+			float							  time = 0.f;
+		} st;
 
-        env.setInit([&](WWindow& w) {
-            st.shader = std::make_shared<Shader>();
-            if (!st.shader->loadFromFile(
-                    "src/water/shader/waterVertex.glsl",
-                    "src/water/shader/waterFrag.frag"))
-            {
-                std::fprintf(stderr, "shader failed\n");
-                return;
-            }
+		env.setInit([&](WWindow& w) {
+			st.shader = std::make_shared<Shader>();
+			if (!st.shader->loadFromFile("src/water/shader/waterVertex.glsl",
+										 "src/water/shader/waterFrag.frag")) {
+				std::fprintf(stderr, "shader failed\n");
+				return;
+			}
 
-            // Sistema de agua
-            st.water = std::make_shared<Particles>();
+			// Sistema de agua
+			st.water = std::make_shared<Particles>();
 			Particles::Config pcfg;
 			// Caja un poco más pequeña (2x1.5x2 = 6 unidades cúbicas)
 			pcfg.boundsMin = {-1.0f, -1.f, -1.0f};
-			pcfg.boundsMax = { 1.0f, 1.0f,  1.0f}; 
+			pcfg.boundsMax = {1.0f, 1.0f, 1.0f};
 
-			pcfg.h = 0.25f;             // Radio más pequeño porque la caja es más pequeña
-			pcfg.restDensity  = 150.f;  
+			pcfg.h			  = 0.25f;	// Radio más pequeño porque la caja es más pequeña
+			pcfg.restDensity  = 150.f;
 			pcfg.particleMass = 0.5f;  // Masa más pequeña para que no haya picos de presión
-			pcfg.stiffness    = 80.f;   // Fuerza de empuje moderada
+			pcfg.stiffness	  = 80.f;  // Fuerza de empuje moderada
 			// Fase 5: viscosidad más baja => líquido, no gelatina. El
 			// amortiguamiento suave (0.99/subpaso) asienta sin "pegajosidad".
-			pcfg.viscosity    = 0.12f;
-			pcfg.gravity      = -9.8f;
-			pcfg.damping      = 0.99f;
-			pcfg.substeps     = 8;      // Subimos a 8 para que la simulación sea más estable y suave
+			pcfg.viscosity = 0.12f;
+			pcfg.gravity   = -9.8f;
+			pcfg.damping   = 0.99f;
+			pcfg.substeps  = 8;	 // Subimos a 8 para que la simulación sea más estable y suave
 
-			pcfg.wallRestitution = 0.0f; 
+			pcfg.wallRestitution = 0.0f;
 
-			pcfg.pointSize = 15.0f;     // Puntos MUY grandes para que se solapen entre sí
-			pcfg.alpha     = 0.9f;
+			pcfg.pointSize = 15.0f;	 // Puntos MUY grandes para que se solapen entre sí
+			pcfg.alpha	   = 0.9f;
 			// Fase 5: margen sobre la superficie REAL del charco (se calcula
 			// dinámicamente en Particles::update a partir de las partículas
 			// asentadas, no con una altura fija).
 			pcfg.rainHideMargin = 0.06f;
 
 			st.marchingCubes = std::make_shared<GPUMarchingCubes>();
-			bool ok = st.marchingCubes->init(
-				pcfg.boundsMin, 
-				pcfg.boundsMax, 
-				48, // Fase 4: más resolución => superficie menos facetada
-				"src/water/shader/density_splat.comp",
-				"src/water/shader/marching_cubes.comp",
-				"src/water/shader/meshVertex.glsl",
-				"src/water/shader/meshFrag.frag"
-			);
+			bool ok			 = st.marchingCubes->init(
+				 pcfg.boundsMin, pcfg.boundsMax,
+				 48,  // Fase 4: más resolución => superficie menos facetada
+				 "src/water/shader/density_splat.comp", "src/water/shader/marching_cubes.comp",
+				 "src/water/shader/meshVertex.glsl", "src/water/shader/meshFrag.frag");
 			if (!ok) {
 				std::fprintf(stderr, "Failed to init Marching Cubes\n");
 			}
@@ -116,93 +112,120 @@ int main() {
 			st.marchingCubes->setSplatYScale(2.0f);
 			if (const char* m = std::getenv("WATER_MODE")) {
 				switch (std::atoi(m)) {
-					case 1: st.mode = Particles::Mode::UniformRise; break;
-					case 2: st.mode = Particles::Mode::Wave;        break;
-					case 3: st.mode = Particles::Mode::Rain;        break;
-					default: break;
+				case 1:
+					st.mode = Particles::Mode::UniformRise;
+					break;
+				case 2:
+					st.mode = Particles::Mode::Wave;
+					break;
+				case 3:
+					st.mode = Particles::Mode::Rain;
+					break;
+				default:
+					break;
 				}
 			}
 			st.water->init(1000, st.mode, pcfg);
 
-            // (Opcional) colisión con terreno:
-            // st.water->setTerrainHeight([](float x, float z) {
-            //     return 0.2f * std::sin(x * 3.f) * std::cos(z * 3.f);
-            // });
-            st.cam = Camera({3.f, 3.f, 4.f}, {0.f, 1.f, 0.f});
+			// (Opcional) colisión con terreno:
+			// st.water->setTerrainHeight([](float x, float z) {
+			//     return 0.2f * std::sin(x * 3.f) * std::cos(z * 3.f);
+			// });
+			st.cam = Camera({3.f, 3.f, 4.f}, {0.f, 1.f, 0.f});
 
-            st.renderer.depthTest(true);
-            st.renderer.cullFace(false);
-            st.renderer.blend(false);   // el blending de partículas se activa en setRender
+			st.renderer.depthTest(true);
+			st.renderer.cullFace(false);
+			st.renderer.blend(false);  // el blending de partículas se activa en setRender
 
-            glEnable(GL_PROGRAM_POINT_SIZE);
+			glEnable(GL_PROGRAM_POINT_SIZE);
 
-            (void)w;
-        });
+			(void)w;
+		});
 
-        env.setUpdate([&](WWindow& w, float dt) {
-            Input& in = w.input();
-            if (in.isKeyPressed(Key::Code::Escape)) w.requestClose();
+		env.setUpdate([&](WWindow& w, float dt) {
+			Input& in = w.input();
+			if (in.isKeyPressed(Key::Code::Escape))
+				w.requestClose();
 
-            // Cambiar modo
-            if (in.isKeyPressed(Key::Code::Num1)) { st.mode = Particles::Mode::UniformRise; st.water->reset(st.mode); }
-            if (in.isKeyPressed(Key::Code::Num2)) { st.mode = Particles::Mode::Wave;        st.water->reset(st.mode); }
-            if (in.isKeyPressed(Key::Code::Num3)) { st.mode = Particles::Mode::Rain;        st.water->reset(st.mode); }
-            if (in.isKeyPressed(Key::Code::R))    { st.water->reset(st.mode); }
+			// Cambiar modo
+			if (in.isKeyPressed(Key::Code::Num1)) {
+				st.mode = Particles::Mode::UniformRise;
+				st.water->reset(st.mode);
+			}
+			if (in.isKeyPressed(Key::Code::Num2)) {
+				st.mode = Particles::Mode::Wave;
+				st.water->reset(st.mode);
+			}
+			if (in.isKeyPressed(Key::Code::Num3)) {
+				st.mode = Particles::Mode::Rain;
+				st.water->reset(st.mode);
+			}
+			if (in.isKeyPressed(Key::Code::R)) {
+				st.water->reset(st.mode);
+			}
 
-            // Física
-            st.water->update(dt);
-            st.water->uploadToGPU();
-            st.marchingCubes->uploadParticles(st.water->getParticles());
-            st.time += dt;
+			// Física
+			st.water->update(dt);
+			st.water->uploadToGPU();
+			st.marchingCubes->uploadParticles(st.water->getParticles());
+			st.time += dt;
 
-            // Cámara
-            float speed = 3.f * dt;
-            glm::vec3 fwd   = st.cam.forward();
-            glm::vec3 right = st.cam.right();
-            glm::vec3 up    = st.cam.up();
-            glm::vec3 move{0.f};
-            if (in.isKeyDown(Key::Code::W)) move += fwd;
-            if (in.isKeyDown(Key::Code::S)) move -= fwd;
-            if (in.isKeyDown(Key::Code::D)) move += right;
-            if (in.isKeyDown(Key::Code::A)) move -= right;
-            if (glm::length(move) > 1e-6f) st.cam.move(glm::normalize(move) * speed);
+			// Cámara
+			float	  speed = 3.f * dt;
+			glm::vec3 fwd	= st.cam.forward();
+			glm::vec3 right = st.cam.right();
+			glm::vec3 up	= st.cam.up();
+			glm::vec3 move{0.f};
+			if (in.isKeyDown(Key::Code::W))
+				move += fwd;
+			if (in.isKeyDown(Key::Code::S))
+				move -= fwd;
+			if (in.isKeyDown(Key::Code::D))
+				move += right;
+			if (in.isKeyDown(Key::Code::A))
+				move -= right;
+			if (glm::length(move) > 1e-6f)
+				st.cam.move(glm::normalize(move) * speed);
 
-            if (in.isMouseButtonDown(Mouse::Button::Right)) {
-                const float s = 0.02f;
-                st.cam.move(right * (-static_cast<float>(in.mouseDeltaX()) * s) +
-                            up    * ( static_cast<float>(in.mouseDeltaY()) * s));
-            }
-            if (in.scrollDelta() != 0.0)
-                st.cam.orbit(0.f, 0.f, -static_cast<float>(in.scrollDelta()) * 0.5f);
+			if (in.isMouseButtonDown(Mouse::Button::Right)) {
+				const float s = 0.02f;
+				st.cam.move(right * (-static_cast<float>(in.mouseDeltaX()) * s) +
+							up * (static_cast<float>(in.mouseDeltaY()) * s));
+			}
+			if (in.scrollDelta() != 0.0)
+				st.cam.orbit(0.f, 0.f, -static_cast<float>(in.scrollDelta()) * 0.5f);
 			if (in.isKeyPressed(Key::Code::Space)) {
 				st.water->reset(st.mode);
 				std::printf("[reset] Simulación reiniciada con la tecla Espacio\n");
 			}
-        });
+		});
 
-        env.setRender([&](WWindow& w) {
-            int rw, rh;
-            if (w.consumeResize(rw, rh)) st.renderer.setViewport(rw, rh);
-            else                          st.renderer.setViewport(w.framebufferWidth(), w.framebufferHeight());
+		env.setRender([&](WWindow& w) {
+			int rw, rh;
+			if (w.consumeResize(rw, rh))
+				st.renderer.setViewport(rw, rh);
+			else
+				st.renderer.setViewport(w.framebufferWidth(), w.framebufferHeight());
 
-            st.renderer.setClearColor(0.05f, 0.05f, 0.10f, 1.f);
-            st.renderer.clear(true, true, false);
+			st.renderer.setClearColor(0.05f, 0.05f, 0.10f, 1.f);
+			st.renderer.clear(true, true, false);
 
-            glm::mat4 vp = st.cam.projection(w.aspect()) * st.cam.view();
+			glm::mat4 vp = st.cam.projection(w.aspect()) * st.cam.view();
 
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			glEnable(GL_BLEND);
+			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-            // st.water->render(*st.shader, vp);
+			// st.water->render(*st.shader, vp);
 
 			st.marchingCubes->generateMesh();
 			if (const char* v = std::getenv("MC_DEBUG_COUNT")) {
 				static int dbgFrame = 0;
-				int every = std::atoi(v);
-				if (every <= 0) every = 1;
+				int		   every	= std::atoi(v);
+				if (every <= 0)
+					every = 1;
 				if (++dbgFrame % (every * 30) == 0)
 					std::printf("[MC] debug vertexCount = %u\n",
-					            st.marchingCubes->debugReadDrawCount());
+								st.marchingCubes->debugReadDrawCount());
 			}
 
 			// Fase 5: las gotas se dibujan PRIMERO y escriben profundidad,
@@ -216,14 +239,14 @@ int main() {
 			glDepthMask(GL_FALSE);
 			st.marchingCubes->render(vp, st.cam.position(), st.time);
 
-            glDepthMask(GL_TRUE);
-            glDisable(GL_BLEND);
-        });
+			glDepthMask(GL_TRUE);
+			glDisable(GL_BLEND);
+		});
 
-        env.run();
-    } catch (const std::exception& e) {
-        std::fprintf(stderr, "exception: %s\n", e.what());
-        return 1;
-    }
-    return 0;
+		env.run();
+	} catch (const std::exception& e) {
+		std::fprintf(stderr, "exception: %s\n", e.what());
+		return 1;
+	}
+	return 0;
 }
