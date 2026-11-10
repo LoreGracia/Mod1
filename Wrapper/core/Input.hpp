@@ -1,8 +1,23 @@
 #pragma once
 #include <unordered_set>
 
+/**
+ * @file Input.hpp
+ * @brief Defines the Input system, mapping GLFW keys/buttons and managing
+ * per-frame input states (down, pressed, released).
+ */
+
+/**
+ * @namespace Key
+ * @brief Contains keyboard-related enums and conversion functions.
+ */
 namespace Key
 {
+/**
+ * @enum Code
+ * @brief Platform-independent key codes.
+ * Values are mapped directly to GLFW key codes for easy conversion.
+ */
 enum class Code : int
 {
 	Unknown		   = -1,
@@ -128,11 +143,24 @@ enum class Code : int
 	Menu		   = 348,
 };
 
+/**
+ * @brief Converts a GLFW integer key code to the internal Key::Code enum.
+ * @param key The GLFW key code.
+ * @return The corresponding Key::Code.
+ */
 Code fromGlfw(int key);
 }  // namespace Key
 
+/**
+ * @namespace Mouse
+ * @brief Contains mouse-related enums and conversion functions.
+ */
 namespace Mouse
 {
+/**
+ * @enum Button
+ * @brief Platform-independent mouse button codes.
+ */
 enum class Button : int
 {
 	Unknown = -1,
@@ -146,61 +174,166 @@ enum class Button : int
 	Button8 = 7,
 };
 
+/**
+ * @brief Converts a GLFW integer mouse button code to the internal Mouse::Button enum.
+ * @param button The GLFW mouse button code.
+ * @return The corresponding Mouse::Button.
+ */
 Button fromGlfw(int button);
 }  // namespace Mouse
 
+/**
+ * @class Input
+ * @brief Manages the input state for a single frame.
+ *
+ * Tracks keyboard and mouse states, including whether a key/button is currently
+ * held down, was just pressed, or was just released in the current frame.
+ */
 class Input
 {
 public:
+	/** @brief Default constructor. */
 	Input() = default;
 
+	/**
+	 * @brief Called at the start of a frame to prepare input states.
+	 * Clears transient states (pressed/released) from the previous frame.
+	 */
 	void beginFrame();
+
+	/**
+	 * @brief Called at the end of a frame.
+	 */
 	void endFrame();
 
+	/** @brief Resets all input states and clears tracked keys/buttons. */
 	void reset();
 
+	/**
+	 * @brief Processes a key down event.
+	 * @param key The key that was pressed.
+	 */
 	void onKeyDown(Key::Code key);
+
+	/**
+	 * @brief Processes a key up event.
+	 * @param key The key that was released.
+	 */
 	void onKeyUp(Key::Code key);
 
+	/**
+	 * @brief Processes a mouse button down event.
+	 * @param button The button that was pressed.
+	 */
 	void onMouseButtonDown(Mouse::Button button);
+
+	/**
+	 * @brief Processes a mouse button up event.
+	 * @param button The button that was released.
+	 */
 	void onMouseButtonUp(Mouse::Button button);
 
+	/**
+	 * @brief Processes a mouse cursor movement event.
+	 * @param x The new X position of the cursor.
+	 * @param y The new Y position of the cursor.
+	 */
 	void onMouseMove(double x, double y);
+
+	/**
+	 * @brief Processes a mouse scroll event.
+	 * @param xoffset The scroll offset on the X axis.
+	 * @param yoffset The scroll offset on the Y axis.
+	 */
 	void onScroll(double xoffset, double yoffset);
+
+	/**
+	 * @brief Updates the window focus state.
+	 * @param focused True if the window gained focus, false otherwise.
+	 */
 	void onFocus(bool focused);
 
+	/**
+	 * @brief Checks if a specific key is currently held down.
+	 * @param key The key to check.
+	 * @return True if held down.
+	 */
 	bool isKeyDown(Key::Code key) const;
+
+	/**
+	 * @brief Checks if a specific key was pressed during this frame.
+	 * @param key The key to check.
+	 * @return True if pressed this frame.
+	 */
 	bool isKeyPressed(Key::Code key) const;
+
+	/**
+	 * @brief Checks if a specific key was released during this frame.
+	 * @param key The key to check.
+	 * @return True if released this frame.
+	 */
 	bool isKeyReleased(Key::Code key) const;
 
+	/**
+	 * @brief Checks if a mouse button is currently held down.
+	 * @param button The mouse button to check.
+	 * @return True if held down.
+	 */
 	bool isMouseButtonDown(Mouse::Button button) const;
+
+	/**
+	 * @brief Checks if a mouse button was pressed during this frame.
+	 * @param button The mouse button to check.
+	 * @return True if pressed this frame.
+	 */
 	bool isMouseButtonPressed(Mouse::Button button) const;
+
+	/**
+	 * @brief Checks if a mouse button was released during this frame.
+	 * @param button The mouse button to check.
+	 * @return True if released this frame.
+	 */
 	bool isMouseButtonReleased(Mouse::Button button) const;
 
+	/** @brief Gets the current X position of the mouse cursor. */
 	double mouseX() const { return m_mouseX; }
+
+	/** @brief Gets the current Y position of the mouse cursor. */
 	double mouseY() const { return m_mouseY; }
+
+	/** @brief Gets the mouse movement delta on the X axis since the last frame. */
 	double mouseDeltaX() const { return m_deltaX; }
+
+	/** @brief Gets the mouse movement delta on the Y axis since the last frame. */
 	double mouseDeltaY() const { return m_deltaY; }
+
+	/** @brief Gets the total scroll delta for the current frame. */
 	double scrollDelta() const { return m_scrollDeltaY; }
+
+	/** @brief Gets the scroll delta on the X axis. */
 	double scrollDeltaX() const { return m_scrollDeltaX; }
+
+	/** @brief Gets the scroll delta on the Y axis. */
 	double scrollDeltaY() const { return m_scrollDeltaY; }
 
 private:
-	std::unordered_set<Key::Code> m_keysDown;
-	std::unordered_set<Key::Code> m_keysPressed;
-	std::unordered_set<Key::Code> m_keysReleased;
+	std::unordered_set<Key::Code> m_keysDown;	   ///< Keys currently held down.
+	std::unordered_set<Key::Code> m_keysPressed;   ///< Keys pressed in the current frame.
+	std::unordered_set<Key::Code> m_keysReleased;  ///< Keys released in the current frame.
 
-	std::unordered_set<Mouse::Button> m_buttonsDown;
-	std::unordered_set<Mouse::Button> m_buttonsPressed;
-	std::unordered_set<Mouse::Button> m_buttonsReleased;
+	std::unordered_set<Mouse::Button> m_buttonsDown;  ///< Mouse buttons currently held down.
+	std::unordered_set<Mouse::Button>
+		m_buttonsPressed;  ///< Mouse buttons pressed in the current frame.
+	std::unordered_set<Mouse::Button>
+		m_buttonsReleased;	///< Mouse buttons released in the current frame
 
-	double m_mouseX			= 0.0;
-	double m_mouseY			= 0.0;
-	double m_lastMouseX		= 0.0;
-	double m_lastMouseY		= 0.0;
-	double m_deltaX			= 0.0;
-	double m_deltaY			= 0.0;
-	double m_scrollDeltaX	= 0.0;
-	double m_scrollDeltaY	= 0.0;
-	bool   m_firstMouseMove = true;
+	double m_mouseX		  = 0.0;   ///< Current mouse X position.
+	double m_mouseY		  = 0.0;   ///< Current mouse Y position.
+	double m_lastMouseX	  = 0.0;   ///< Mouse X position in the previous frame.
+	double m_lastMouseY	  = 0.0;   ///< Mouse Y position in the previous frame.
+	double m_deltaX		  = 0.0;   ///< Mouse delta X for the current frame.
+	double m_deltaY		  = 0.0;   ///< Mouse delta Y for the current frame.
+	double m_scrollDeltaX = 0.0;   ///< Scroll delta X for the current frame.
+	double m_scrollDeltaY = 0.0;   ///< Scroll delta Y for the current frame.
+	bool m_firstMouseMove = true;  ///< Flag to ignore the initial mouse jump when the window opens.
 };
