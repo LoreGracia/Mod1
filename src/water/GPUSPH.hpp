@@ -19,8 +19,8 @@
  *
  * Owns the GPU-side particle state (SoA layout spread over several SSBOs) and
  * dispatches the compute passes of the solver: Clear & Predict, GPU spatial
- * hash, Density & Pressure and Forces & XSPH (integration follows as a
- * further pass, see the TODO marker in update()).
+ * hash, Density & Pressure, Forces & XSPH and Integration (collisions and
+ * rain recycling included).
  * The particle SSBO uses the same GPUParticle layout as the Marching Cubes
  * splat pass (2 x vec4), so it can be shared with GPUMarchingCubes without
  * CPU round-trips once the migration is complete.
@@ -81,11 +81,12 @@ public:
 	 * @param hashPath Path to the spatial hashing shader (sph_hash.comp).
 	 * @param densityPath Path to the density & pressure shader (sph_density.comp).
 	 * @param forcesPath Path to the forces & XSPH shader (sph_forces.comp).
+	 * @param integratePath Path to the integration shader (sph_integrate.comp).
 	 * @return True if the shaders compiled and the buffers were created successfully.
 	 */
 	bool init(size_t maxParticles, const Params& params, const std::string& clearPredictPath,
 			  const std::string& hashPath, const std::string& densityPath,
-			  const std::string& forcesPath);
+			  const std::string& forcesPath, const std::string& integratePath);
 
 	/**
 	 * @brief Uploads the initial particle state (CPU -> GPU seeding).
@@ -101,10 +102,9 @@ public:
 	/**
 	 * @brief Runs one frame of the SPH pipeline on the GPU.
 	 *
-	 * Each substep dispatches Clear & Predict, the six counting-sort phases of
-	 * the spatial hash, the Density & Pressure pass and the Forces & XSPH
-	 * pass; the integration pass is dispatched from here as it lands (see the
-	 * TODO marker).
+	 * Each substep dispatches the full chain: Clear & Predict, the six
+	 * counting-sort phases of the spatial hash, Density & Pressure, Forces &
+	 * XSPH and Integration (collisions + rain recycling + classification).
 	 *
 	 * @param dt Delta time in seconds.
 	 */
@@ -181,6 +181,23 @@ public:
 							 std::vector<glm::vec4>& outXsph) const;
 
 	/**
+	 * @brief Reads back the particle state (debug/validate only).
+	 *
+	 * Retrieves the particle SSBO split into its three vec4 planes:
+	 * position + splatWeight, velocity + age and flags (x = rainDrop).
+	 * Used by the offline validation harness; the render loop must never
+	 * stall on this.
+	 *
+	 * @note This introduces a CPU-GPU stall: NEVER call it in the render loop.
+	 * @param outPosWeight Destination for positions + splatWeight.
+	 * @param outVelAge Destination for velocities + age.
+	 * @param outFlags Destination for the flags plane.
+	 */
+	void debugReadbackParticles(std::vector<glm::vec4>& outPosWeight,
+								 std::vector<glm::vec4>& outVelAge,
+								 std::vector<glm::vec4>& outFlags) const;
+
+	/**
 	 * @brief Releases all OpenGL resources.
 	 * @note Idempotent. Called from the destructor; can be called manually.
 	 */
@@ -240,6 +257,18 @@ private:
 	 */
 	void computeForces();
 
+	/**
+	 * @brief Dispatches the Integration pass (sph_integrate.comp).
+	 *
+	 * Binds the SSBOs, sets the pass uniforms and issues the dispatch with a
+	 * trailing memory barrier. Applies the forces and the XSPH delta to the
+	 * velocities, moves the particles, resolves the boundary collisions and
+	 * the rain recycling, and classifies splatWeight.
+	 *
+	 * @param subDt Substep delta time applied to the integration.
+	 */
+	void integrateParticles(float subDt);
+
 	Params m_params;  ///< Current physics and grid parameters.
 
 	GLuint m_particleSSBO	= 0;  ///< GPUParticle[] state (binding 0).
@@ -256,15 +285,17 @@ private:
 
 	Shader m_clearPredictShader;  ///< sph_clear_predict.comp.
 	Shader m_hashShader;		  ///< sph_hash.comp (phases multiplexed via uPhase).
-	Shader m_densityShader;		  ///< sph_density.comp (Poly6 density + equation of state).
-	Shader m_forcesShader;		  ///< sph_forces.comp (Spiky + Laplacian forces + XSPH delta).
+	Shader m_densityShader;			///< sph_density.comp (Poly6 density + equation of state).
+	Shader m_forcesShader;			///< sph_forces.comp (Spiky + Laplacian forces + XSPH delta).
+	Shader m_integrateShader;		///< sph_integrate.comp (Euler integration + collisions + recycling).
 
 	glm::ivec3 m_gridSize{0};	   ///< Grid cells per axis.
 	int		   m_numCells  = 0;	   ///< Total number of grid cells (gx*gy*gz).
 	int		   m_numBlocks = 0;	   ///< Scan workgroups covering the grid (ceil(numCells/1024)).
 	float	   m_cellSize  = 0.f;  ///< Effective cell edge length (>= h, see rebuildGrid).
 
-	size_t m_maxParticles  = 0;		 ///< Capacity of the per-particle SSBOs.
-	size_t m_particleCount = 0;		 ///< Valid particles in the SSBOs.
-	bool   m_initialized   = false;	 ///< Flag indicating if the pipeline is ready.
+	size_t m_maxParticles	= 0;		///< Capacity of the per-particle SSBOs.
+	size_t m_particleCount	= 0;		///< Valid particles in the SSBOs.
+	unsigned m_recycleSeed = 0;	///< Seed of the respawn RNG, advanced every substep.
+	bool   m_initialized	= false;	///< Flag indicating if the pipeline is ready.
 };

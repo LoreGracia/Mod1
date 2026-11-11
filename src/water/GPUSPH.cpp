@@ -4,9 +4,11 @@
  * Dispatches the compute passes that replace the CPU solver: Clear & Predict,
  * the GPU spatial hash (counting sort over a uniform grid, which replaces the
  * CPU std::unordered_map of Particles::buildHash), the Density & Pressure
- * pass (Poly6 kernel + equation of state over the sorted neighbor ranges)
- * and the Forces & XSPH pass (Spiky pressure + Laplacian viscosity + XSPH
- * velocity smoothing over the same ranges).
+ * pass (Poly6 kernel + equation of state over the sorted neighbor ranges),
+ * the Forces & XSPH pass (Spiky pressure + Laplacian viscosity + XSPH
+ * velocity smoothing over the same ranges) and the Integration pass
+ * (semi-implicit Euler, boundary collisions, rain recycling and
+ * classification, updating the particle state in place).
  */
 
 #include <GPUSPH.hpp>
@@ -22,13 +24,14 @@ namespace
  * @struct GPUParticle
  * @brief GPU particle structure stored in the particle SSBO.
  *
- * Must match the GPUParticle struct layout in sph_clear_predict.comp and
- * density_splat.comp (std430, 32 bytes).
+ * Must match the GPUParticle struct layout in sph_clear_predict.comp,
+ * sph_integrate.comp and density_splat.comp (std430, 48 bytes).
  */
 struct GPUParticle
 {
-	glm::vec4 posWeight;  ///< xyz = position, w = splatWeight.
-	glm::vec4 velAge;	  ///< xyz = velocity, w = age.
+	glm::vec4 posWeight;	///< xyz = position, w = splatWeight.
+	glm::vec4 velAge;		///< xyz = velocity, w = age.
+	glm::vec4 flags;		///< x = rainDrop flag (1 = rain drop), y,z,w = unused.
 };
 
 /** @brief Threads per workgroup used by every phase of sph_hash.comp. */
@@ -42,6 +45,9 @@ constexpr int DENSITY_WORKGROUP_SIZE = 64;
 
 /** @brief Threads per workgroup used by sph_forces.comp. */
 constexpr int FORCES_WORKGROUP_SIZE = 64;
+
+/** @brief Threads per workgroup used by sph_integrate.comp. */
+constexpr int INTEGRATE_WORKGROUP_SIZE = 64;
 
 /**
  * @brief Computes the number of workgroups needed to cover n items.
@@ -77,11 +83,12 @@ GPUSPH::~GPUSPH()
  * @param hashPath Path to the spatial hashing shader.
  * @param densityPath Path to the density & pressure shader.
  * @param forcesPath Path to the forces & XSPH shader.
+ * @param integratePath Path to the integration shader.
  * @return True if the shaders compiled and the buffers were created successfully.
  */
 bool GPUSPH::init(size_t maxParticles, const Params& params, const std::string& clearPredictPath,
 				  const std::string& hashPath, const std::string& densityPath,
-				  const std::string& forcesPath)
+				  const std::string& forcesPath, const std::string& integratePath)
 {
 	if (m_initialized)
 		release();
@@ -109,6 +116,12 @@ bool GPUSPH::init(size_t maxParticles, const Params& params, const std::string& 
 	// Load the forces & XSPH compute shader (sph_forces.comp)
 	if (!m_forcesShader.loadComputeFromFile(forcesPath)) {
 		std::fprintf(stderr, "GPUSPH: failed to load '%s'\n", forcesPath.c_str());
+		return false;
+	}
+
+	// Load the integration compute shader (sph_integrate.comp)
+	if (!m_integrateShader.loadComputeFromFile(integratePath)) {
+		std::fprintf(stderr, "GPUSPH: failed to load '%s'\n", integratePath.c_str());
 		return false;
 	}
 
@@ -238,6 +251,7 @@ void GPUSPH::uploadParticles(const std::vector<Particle>& particles)
 	for (size_t i = 0; i < particles.size(); ++i) {
 		staging[i].posWeight = glm::vec4(particles[i].position, particles[i].splatWeight);
 		staging[i].velAge	 = glm::vec4(particles[i].velocity, particles[i].age);
+		staging[i].flags	 = glm::vec4(particles[i].rainDrop ? 1.f : 0.f, 0.f, 0.f, 0.f);
 	}
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_particleSSBO);
@@ -385,11 +399,43 @@ void GPUSPH::computeForces()
 }
 
 /**
+ * @brief Dispatches the Integration pass (sph_integrate.comp).
+ *
+ * One invocation per particle: applies the force and the XSPH delta to the
+ * velocity (with damping and the speed clamp), moves the particle, resolves
+ * the ground/wall/ceiling collisions, recycles rain drops that touch the
+ * ground and classifies splatWeight on the post-move state.
+ *
+ * @param subDt Substep delta time applied to the integration.
+ */
+void GPUSPH::integrateParticles(float subDt)
+{
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_PARTICLES, m_particleSSBO);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_FORCES, m_forceSSBO);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_XSPH_VEL, m_xsphVelSSBO);
+
+	m_integrateShader.use();
+	m_integrateShader.setInt("uParticleCount", static_cast<int>(m_particleCount));
+	m_integrateShader.setFloat("uDt", subDt);
+	m_integrateShader.setFloat("uDamping", m_params.damping);
+	m_integrateShader.setFloat("uMaxSpeed", m_params.maxSpeed);
+	m_integrateShader.setVec3("uBoundsMin", m_params.boundsMin);
+	m_integrateShader.setVec3("uBoundsMax", m_params.boundsMax);
+	m_integrateShader.setFloat("uWallRestitution", m_params.wallRestitution);
+	m_integrateShader.setInt("uRainMode", m_params.rainMode ? 1 : 0);
+	m_integrateShader.setFloat("uSettleSpeed", m_params.rainSettleSpeed);
+	m_integrateShader.setFloat("uAirY", m_params.boundsMax.y - m_params.rainAirBand);
+	m_integrateShader.setInt("uSeed", static_cast<int>(m_recycleSeed));
+	m_integrateShader.dispatch(groupsFor(m_particleCount, INTEGRATE_WORKGROUP_SIZE), 1, 1);
+	glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+}
+
+/**
  * @brief Runs one frame of the SPH pipeline on the GPU.
  *
- * Each substep currently executes Clear & Predict + Spatial Hash + Density &
- * Pressure + Forces & XSPH; the integration pass is dispatched from here
- * as it lands.
+ * Each substep executes the full chain: Clear & Predict, Spatial Hash,
+ * Density & Pressure, Forces & XSPH and Integration (collisions, rain
+ * recycling and classification).
  *
  * @param dt Delta time in seconds.
  */
@@ -406,10 +452,10 @@ void GPUSPH::update(float dt)
 		buildSpatialHash(subDt);
 		computeDensityPressure();
 		computeForces();
+		integrateParticles(subDt);
 
-		// TODO: sph_integrate.comp — semi-implicit Euler + XSPH application,
-		// damping, speed clamp and boundary collisions, writing m_particleSSBO
-		// in place.
+		// Advance the respawn RNG seed: every substep draws a fresh stream.
+		++m_recycleSeed;
 	}
 }
 
@@ -556,6 +602,41 @@ void GPUSPH::debugReadbackForces(std::vector<glm::vec4>& outForce,
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_xsphVelSSBO);
 	glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, bytes, outXsph.data());
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+}
+
+/**
+ * @brief Reads back the particle state (debug/validate only).
+ * @param outPosWeight Destination for positions + splatWeight.
+ * @param outVelAge Destination for velocities + age.
+ * @param outFlags Destination for the flags plane (x = rainDrop).
+ */
+void GPUSPH::debugReadbackParticles(std::vector<glm::vec4>& outPosWeight,
+									std::vector<glm::vec4>& outVelAge,
+									std::vector<glm::vec4>& outFlags) const
+{
+	outPosWeight.clear();
+	outVelAge.clear();
+	outFlags.clear();
+	if (!m_initialized || m_particleCount == 0)
+		return;
+
+	glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+	// The SSBO stores interleaved 48-byte particles (posWeight, velAge,
+	// flags): fetch the raw stream once and de-interleave on the CPU.
+	std::vector<glm::vec4> raw(m_particleCount * 3);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_particleSSBO);
+	glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+					   static_cast<GLsizeiptr>(raw.size() * sizeof(glm::vec4)), raw.data());
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+	outPosWeight.resize(m_particleCount);
+	outVelAge.resize(m_particleCount);
+	outFlags.resize(m_particleCount);
+	for (size_t i = 0; i < m_particleCount; ++i) {
+		outPosWeight[i] = raw[i * 3 + 0];
+		outVelAge[i]	= raw[i * 3 + 1];
+		outFlags[i]		= raw[i * 3 + 2];
+	}
 }
 
 /**

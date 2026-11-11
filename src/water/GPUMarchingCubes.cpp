@@ -27,12 +27,13 @@ struct GPUVertex
 /**
  * @struct GPUParticle
  * @brief Input particle structure consumed by the density splatting compute shader.
- * Must match the GPUParticle struct layout in density_splat.comp (std430, 32 bytes).
+ * Must match the GPUParticle struct layout in density_splat.comp (std430, 48 bytes).
  */
 struct GPUParticle
 {
 	glm::vec4 posWeight;  ///< xyz = position, w = splatWeight
 	glm::vec4 velAge;	  ///< xyz = velocity, w = age
+	glm::vec4 flags;	  ///< x = rainDrop flag (1 = rain drop), y,z,w = unused
 };
 }  // namespace
 
@@ -210,6 +211,7 @@ void GPUMarchingCubes::uploadParticles(const std::vector<Particle>& particles)
 	for (size_t i = 0; i < particles.size(); ++i) {
 		staging[i].posWeight = glm::vec4(particles[i].position, particles[i].splatWeight);
 		staging[i].velAge	 = glm::vec4(particles[i].velocity, particles[i].age);
+		staging[i].flags	 = glm::vec4(particles[i].rainDrop ? 1.f : 0.f, 0.f, 0.f, 0.f);
 	}
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_particleSSBO);

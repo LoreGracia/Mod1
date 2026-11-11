@@ -1,0 +1,178 @@
+#version 430 core
+
+/**
+ * @file sph_integrate.comp
+ * @brief Final SPH pass: semi-implicit Euler integration, boundary
+ * collisions, rain recycling and the settled/airborne classification.
+ *
+ * Executed right after sph_forces.comp, once per substep. One invocation
+ * per particle applies, in the same order as the CPU solver:
+ *   1. Velocity update: force (acceleration) * dt plus the XSPH delta
+ *      stored by sph_forces.comp, then damping and the speed clamp.
+ *   2. Position update (pos += vel * dt) and age advance.
+ *   3. Collisions: flat ground at boundsMin.y (with restitution and
+ *      horizontal friction) and the container walls and ceiling.
+ *   4. Rain recycling: rain-drop particles touching the ground band are
+ *      respawned at the top with a fresh downward velocity.
+ *   5. Settled vs airborne classification of splatWeight, evaluated on the
+ *      post-move state (the CPU classifies on the final state of the last
+ *      substep; evaluating every substep yields the same final result).
+ *
+ * The splatWeight rule mirrors the CPU solver exactly, including the
+ * per-particle rain-drop flag (now available on the GPU):
+ *   airborne = rainMode && (rainDrop || speed > settleSpeed || y > airY).
+ *
+ * The respawn RNG differs from the CPU by necessity: a sequential
+ * std::mt19937 cannot run in parallel. Each respawn draws from a PCG hash
+ * seeded with the particle index and a per-dispatch seed uniform, so the
+ * outcome is deterministic for a given seed and has the same uniform
+ * distribution, but the concrete sequence differs from the CPU.
+ *
+ * Terrain note: the ground is the flat plane boundsMin.y. The optional
+ * height-function terrain of the CPU solver is not migrated (the
+ * application never sets one).
+ */
+
+layout(local_size_x = 64) in;
+
+// ─── SSBOs (bindings must match GPUSPH.cpp) ──────────────────────────
+/**
+ * @struct GPUParticle
+ * @brief GPU representation of a particle, occupying 48 bytes (3 vec4s).
+ * Identical to the struct in density_splat.comp, so the same SSBO can be
+ * handed to the Marching Cubes splat pass without any copy or conversion
+ * (zero-copy handoff).
+ */
+struct GPUParticle {
+    vec4 posWeight; ///< xyz = position, w = splatWeight (0 = airborne drop, 1 = settled water).
+    vec4 velAge;    ///< xyz = velocity, w = age.
+    vec4 flags;     ///< x = rainDrop flag (1 = rain drop, recycled at the ground), y,z,w = unused.
+};
+
+layout(std430, binding = 0) buffer ParticleBuffer {
+    GPUParticle particles[]; ///< Read-modify-write: this pass owns the state update.
+};
+
+layout(std430, binding = 2) buffer ForceBuffer {
+    vec4 forces[]; ///< xyz = force (acceleration): gravity + pressure + viscosity.
+};
+
+layout(std430, binding = 10) buffer XsphVelBuffer {
+    vec4 xsphVel[]; ///< xyz = XSPH velocity delta (computed by sph_forces.comp).
+};
+
+// ─── Uniforms ────────────────────────────────────────────────────────
+uniform int   uParticleCount;   ///< Number of valid particles (not the SSBO capacity).
+uniform float uDt;              ///< Substep delta time in seconds.
+uniform float uDamping;         ///< Velocity damping factor per substep.
+uniform float uMaxSpeed;         ///< Velocity clamp for stability.
+uniform vec3  uBoundsMin;       ///< Minimum corner of the container.
+uniform vec3  uBoundsMax;       ///< Maximum corner of the container.
+uniform float uWallRestitution; ///< Bounciness of the container walls.
+uniform int   uRainMode;        ///< 1 = rain mode: classification + recycling active.
+uniform float uSettleSpeed;     ///< Speed above which a particle counts as airborne.
+uniform float uAirY;            ///< Height of the lower edge of the airborne band.
+uniform int   uSeed;             ///< Per-dispatch seed of the respawn RNG.
+
+/**
+ * @brief PCG-style integer hash for the respawn RNG.
+ * @param v Input value to diffuse.
+ * @return A well-distributed 32-bit hash.
+ */
+uint pcgHash(uint v) {
+    uint state = v * 747796405u + 2891336453u;
+    uint word  = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+/**
+ * @brief Draws the next uniform [0, 1) float from the RNG stream.
+ * @param seed RNG state, advanced in place.
+ * @return A uniform float in [0, 1).
+ */
+float rand01(inout uint seed) {
+    seed = pcgHash(seed);
+    return float(seed) * (1.0 / 4294967296.0);
+}
+
+/**
+ * @brief Integrates one particle and resolves collisions and recycling.
+ *
+ * All numeric constants (ground friction, recycle band, respawn height
+ * band and respawn speed) mirror the hardcoded values of the CPU solver.
+ */
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= uint(uParticleCount)) return;
+
+    vec3  pos = particles[i].posWeight.xyz;
+    vec3  vel = particles[i].velAge.xyz;
+    float age = particles[i].velAge.w;
+    vec4  flags = particles[i].flags;
+
+    // 1. Semi-implicit Euler + XSPH delta + damping + speed clamp.
+    vel += forces[i].xyz * uDt + xsphVel[i].xyz;
+    vel *= uDamping;
+    float speed = length(vel);
+    if (speed > uMaxSpeed)
+        vel = (vel / speed) * uMaxSpeed;
+
+    // 2. Position update and age advance.
+    pos += vel * uDt;
+    age += uDt;
+
+    // 3. Collisions: flat ground, walls and ceiling.
+    const float e      = uWallRestitution;
+    const float ground = uBoundsMin.y;
+    if (pos.y < ground) {
+        pos.y = ground;
+        if (vel.y < 0.0)
+            vel.y = -vel.y * e;
+        vel.x *= 0.98; // ground friction (CPU solver constant)
+        vel.z *= 0.98;
+    }
+    if (pos.x < uBoundsMin.x) {
+        pos.x = uBoundsMin.x;
+        vel.x = -vel.x * e;
+    }
+    if (pos.x > uBoundsMax.x) {
+        pos.x = uBoundsMax.x;
+        vel.x = -vel.x * e;
+    }
+    if (pos.z < uBoundsMin.z) {
+        pos.z = uBoundsMin.z;
+        vel.z = -vel.z * e;
+    }
+    if (pos.z > uBoundsMax.z) {
+        pos.z = uBoundsMax.z;
+        vel.z = -vel.z * e;
+    }
+    if (pos.y > uBoundsMax.y) {
+        pos.y = uBoundsMax.y;
+        vel.y = -vel.y * e;
+    }
+
+    // 4. Rain recycling: rain drops touching the ground band respawn at
+    //    the top with a fresh downward velocity (CPU solver constants).
+    if (uRainMode != 0 && flags.x > 0.5 && pos.y <= ground + 0.05) {
+        uint  seed = pcgHash(gl_GlobalInvocationID.x ^ uint(uSeed));
+        float rx   = rand01(seed);
+        float rz   = rand01(seed);
+        float ry   = rand01(seed);
+        float rv   = rand01(seed);
+        pos = vec3(mix(uBoundsMin.x + 0.05, uBoundsMax.x - 0.05, rx),
+                   uBoundsMax.y - ry * 0.15,
+                   mix(uBoundsMin.z + 0.05, uBoundsMax.z - 0.05, rz));
+        vel = vec3(0.0, -3.0 - rv * 1.5, 0.0);
+        age = 0.0;
+    }
+
+    // 5. Settled vs airborne classification on the post-move state.
+    float splatWeight = 1.0;
+    if (uRainMode != 0) {
+        if (flags.x > 0.5 || length(vel) > uSettleSpeed || pos.y > uAirY)
+            splatWeight = 0.0;
+    }
+
+    particles[i] = GPUParticle(vec4(pos, splatWeight), vec4(vel, age), flags);
+}

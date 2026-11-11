@@ -32,7 +32,7 @@ layout(local_size_x = 64) in;
 // ─── SSBOs (bindings must match GPUSPH.cpp) ──────────────────────────
 /**
  * @struct GPUParticle
- * @brief GPU representation of a particle, occupying 32 bytes (2 vec4s).
+ * @brief GPU representation of a particle, occupying 48 bytes (3 vec4s).
  * Identical to the struct in density_splat.comp, so the same SSBO can be
  * handed to the Marching Cubes splat pass without any copy or conversion
  * (zero-copy handoff).
@@ -40,6 +40,7 @@ layout(local_size_x = 64) in;
 struct GPUParticle {
     vec4 posWeight; ///< xyz = position, w = splatWeight (0 = airborne drop, 1 = settled water).
     vec4 velAge;    ///< xyz = velocity, w = age.
+    vec4 flags;     ///< x = rainDrop flag (1 = rain drop, recycled at the ground), y,z,w = unused.
 };
 
 layout(std430, binding = 0) buffer ParticleBuffer {
