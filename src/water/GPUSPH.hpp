@@ -19,8 +19,8 @@
  *
  * Owns the GPU-side particle state (SoA layout spread over several SSBOs) and
  * dispatches the compute passes of the solver: Clear & Predict, GPU spatial
- * hash and Density & Pressure (forces and integration follow as further
- * passes, see the TODO markers in update()).
+ * hash, Density & Pressure and Forces & XSPH (integration follows as a
+ * further pass, see the TODO marker in update()).
  * The particle SSBO uses the same GPUParticle layout as the Marching Cubes
  * splat pass (2 x vec4), so it can be shared with GPUMarchingCubes without
  * CPU round-trips once the migration is complete.
@@ -80,10 +80,12 @@ public:
 	 * @param clearPredictPath Path to the Clear & Predict shader (sph_clear_predict.comp).
 	 * @param hashPath Path to the spatial hashing shader (sph_hash.comp).
 	 * @param densityPath Path to the density & pressure shader (sph_density.comp).
+	 * @param forcesPath Path to the forces & XSPH shader (sph_forces.comp).
 	 * @return True if the shaders compiled and the buffers were created successfully.
 	 */
 	bool init(size_t maxParticles, const Params& params, const std::string& clearPredictPath,
-			  const std::string& hashPath, const std::string& densityPath);
+			  const std::string& hashPath, const std::string& densityPath,
+			  const std::string& forcesPath);
 
 	/**
 	 * @brief Uploads the initial particle state (CPU -> GPU seeding).
@@ -100,9 +102,9 @@ public:
 	 * @brief Runs one frame of the SPH pipeline on the GPU.
 	 *
 	 * Each substep dispatches Clear & Predict, the six counting-sort phases of
-	 * the spatial hash and the Density & Pressure pass; the forces and
-	 * integration passes are dispatched from here as they land (see the TODO
-	 * markers).
+	 * the spatial hash, the Density & Pressure pass and the Forces & XSPH
+	 * pass; the integration pass is dispatched from here as it lands (see the
+	 * TODO marker).
 	 *
 	 * @param dt Delta time in seconds.
 	 */
@@ -164,6 +166,21 @@ public:
 	void debugReadbackDensity(std::vector<glm::vec4>& out) const;
 
 	/**
+	 * @brief Reads back the force and XSPH buffers (debug/validate only).
+	 *
+	 * Retrieves ForceBuffer (gravity + pressure + viscosity, xyz) and
+	 * XsphVelBuffer (the velocity delta to apply when integrating, xyz).
+	 * Used by the offline validation harness; the render loop must never
+	 * stall on this.
+	 *
+	 * @note This introduces a CPU-GPU stall: NEVER call it in the render loop.
+	 * @param outForce Destination for the forces; resized to the particle count.
+	 * @param outXsph Destination for the XSPH deltas; resized to the particle count.
+	 */
+	void debugReadbackForces(std::vector<glm::vec4>& outForce,
+							 std::vector<glm::vec4>& outXsph) const;
+
+	/**
 	 * @brief Releases all OpenGL resources.
 	 * @note Idempotent. Called from the destructor; can be called manually.
 	 */
@@ -182,7 +199,8 @@ private:
 		BINDING_CELL_COUNT = 6,  ///< CellCountBuffer: uint[] particles per cell.
 		BINDING_CELL_START = 7,  ///< CellStartBuffer: uint[] exclusive prefix (range start).
 		BINDING_CELL_CURSOR = 8,///< CellCursorBuffer: uint[] scatter write cursors.
-		BINDING_BLOCK_SUMS = 9   ///< BlockSumsBuffer: uint[] scan segment totals/offsets.
+		BINDING_BLOCK_SUMS = 9, ///< BlockSumsBuffer: uint[] scan segment totals/offsets.
+		BINDING_XSPH_VEL = 10   ///< XsphVelBuffer: vec4[] XSPH velocity delta (applied when integrating).
 	};
 
 	/** @brief Creates and allocates all SSBOs for the current capacity/grid. */
@@ -210,6 +228,16 @@ private:
 	 */
 	void computeDensityPressure();
 
+	/**
+	 * @brief Dispatches the Forces & XSPH pass (sph_forces.comp).
+	 *
+	 * Binds the SSBOs, sets the pass uniforms and issues the dispatch with a
+	 * trailing memory barrier. Adds the pressure (Spiky) and viscosity
+	 * (Laplacian) terms on top of the gravity in ForceBuffer and stores the
+	 * XSPH velocity delta in XsphVelBuffer.
+	 */
+	void computeForces();
+
 	Params m_params;  ///< Current physics and grid parameters.
 
 	GLuint m_particleSSBO = 0;	 ///< GPUParticle[] state (binding 0).
@@ -222,10 +250,12 @@ private:
 	GLuint m_cellStartSSBO = 0;	 ///< uint[] per-cell range start (binding 7).
 	GLuint m_cellCursorSSBO = 0;	 ///< uint[] scatter cursors (binding 8).
 	GLuint m_blockSumsSSBO = 0;	 ///< uint[] scan block sums (binding 9).
+	GLuint m_xsphVelSSBO = 0;	 ///< vec4[] XSPH velocity delta (binding 10).
 
 	Shader m_clearPredictShader;	///< sph_clear_predict.comp.
 	Shader m_hashShader;			///< sph_hash.comp (phases multiplexed via uPhase).
 	Shader m_densityShader;			///< sph_density.comp (Poly6 density + equation of state).
+	Shader m_forcesShader;			///< sph_forces.comp (Spiky + Laplacian forces + XSPH delta).
 
 	glm::ivec3 m_gridSize{0};	 ///< Grid cells per axis.
 	int		   m_numCells = 0;	 ///< Total number of grid cells (gx*gy*gz).

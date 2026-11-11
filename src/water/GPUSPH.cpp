@@ -3,8 +3,10 @@
  *
  * Dispatches the compute passes that replace the CPU solver: Clear & Predict,
  * the GPU spatial hash (counting sort over a uniform grid, which replaces the
- * CPU std::unordered_map of Particles::buildHash) and the Density & Pressure
- * pass (Poly6 kernel + equation of state over the sorted neighbor ranges).
+ * CPU std::unordered_map of Particles::buildHash), the Density & Pressure
+ * pass (Poly6 kernel + equation of state over the sorted neighbor ranges)
+ * and the Forces & XSPH pass (Spiky pressure + Laplacian viscosity + XSPH
+ * velocity smoothing over the same ranges).
  */
 
 #include <GPUSPH.hpp>
@@ -37,6 +39,9 @@ constexpr int PREDICT_WORKGROUP_SIZE = 64;
 
 /** @brief Threads per workgroup used by sph_density.comp. */
 constexpr int DENSITY_WORKGROUP_SIZE = 64;
+
+/** @brief Threads per workgroup used by sph_forces.comp. */
+constexpr int FORCES_WORKGROUP_SIZE = 64;
 
 /**
  * @brief Computes the number of workgroups needed to cover n items.
@@ -71,10 +76,12 @@ GPUSPH::~GPUSPH()
  * @param clearPredictPath Path to the Clear & Predict shader.
  * @param hashPath Path to the spatial hashing shader.
  * @param densityPath Path to the density & pressure shader.
+ * @param forcesPath Path to the forces & XSPH shader.
  * @return True if the shaders compiled and the buffers were created successfully.
  */
 bool GPUSPH::init(size_t maxParticles, const Params& params, const std::string& clearPredictPath,
-				  const std::string& hashPath, const std::string& densityPath)
+				  const std::string& hashPath, const std::string& densityPath,
+				  const std::string& forcesPath)
 {
 	if (m_initialized)
 		release();
@@ -96,6 +103,12 @@ bool GPUSPH::init(size_t maxParticles, const Params& params, const std::string& 
 	// Load the density & pressure compute shader (sph_density.comp)
 	if (!m_densityShader.loadComputeFromFile(densityPath)) {
 		std::fprintf(stderr, "GPUSPH: failed to load '%s'\n", densityPath.c_str());
+		return false;
+	}
+
+	// Load the forces & XSPH compute shader (sph_forces.comp)
+	if (!m_forcesShader.loadComputeFromFile(forcesPath)) {
+		std::fprintf(stderr, "GPUSPH: failed to load '%s'\n", forcesPath.c_str());
 		return false;
 	}
 
@@ -178,6 +191,9 @@ void GPUSPH::createBuffers()
 	createSSBO(m_cellStartSSBO, cellBytes);	   // binding 7
 	createSSBO(m_cellCursorSSBO, cellBytes);	   // binding 8
 	createSSBO(m_blockSumsSSBO, blockBytes);	   // binding 9
+
+	// ── XSPH velocity delta (applied by the integration pass) ────────
+	createSSBO(m_xsphVelSSBO, vec4Bytes);		   // binding 10: vec4[] XSPH delta
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
@@ -338,11 +354,43 @@ void GPUSPH::computeDensityPressure()
 }
 
 /**
+ * @brief Dispatches the Forces & XSPH pass (sph_forces.comp).
+ *
+ * One invocation per particle: fused 27-cell sweep accumulating the Spiky
+ * pressure force, the Laplacian viscosity force (added on top of the gravity
+ * already present in ForceBuffer) and the XSPH velocity delta, stored in
+ * XsphVelBuffer because applying it in place would race against the neighbor
+ * velocity reads of this same pass.
+ */
+void GPUSPH::computeForces()
+{
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_PARTICLES, m_particleSSBO);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_DENS_PRESS, m_densPressSSBO);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_FORCES, m_forceSSBO);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_POS_PRED, m_posPredSSBO);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_SORTED_IDX, m_sortedIdxSSBO);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_CELL_COUNT, m_cellCountSSBO);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_CELL_START, m_cellStartSSBO);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_XSPH_VEL, m_xsphVelSSBO);
+
+	m_forcesShader.use();
+	m_forcesShader.setInt("uParticleCount", static_cast<int>(m_particleCount));
+	m_forcesShader.setFloat("uH", m_params.h);
+	m_forcesShader.setFloat("uViscosity", m_params.viscosity);
+	m_forcesShader.setFloat("uXsph", m_params.xsph);
+	m_forcesShader.setIVec3("uGridSize", m_gridSize);
+	m_forcesShader.setVec3("uGridMin", m_params.boundsMin);
+	m_forcesShader.setFloat("uCellSize", m_cellSize);
+	m_forcesShader.dispatch(groupsFor(m_particleCount, FORCES_WORKGROUP_SIZE), 1, 1);
+	glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+}
+
+/**
  * @brief Runs one frame of the SPH pipeline on the GPU.
  *
  * Each substep currently executes Clear & Predict + Spatial Hash + Density &
- * Pressure; the remaining passes of the roadmap are dispatched from here as
- * they land.
+ * Pressure + Forces & XSPH; the integration pass is dispatched from here
+ * as it lands.
  *
  * @param dt Delta time in seconds.
  */
@@ -358,11 +406,11 @@ void GPUSPH::update(float dt)
 	for (int s = 0; s < m_params.substeps; ++s) {
 		buildSpatialHash(subDt);
 		computeDensityPressure();
+		computeForces();
 
-		// TODO: sph_forces.comp — Spiky pressure + Laplacian viscosity + XSPH,
-		// accumulating on m_forceSSBO (gravity already injected).
-		// TODO: sph_integrate.comp — semi-implicit Euler, speed clamp and
-		// boundary collisions, writing m_particleSSBO in place.
+		// TODO: sph_integrate.comp — semi-implicit Euler + XSPH application,
+		// damping, speed clamp and boundary collisions, writing m_particleSSBO
+		// in place.
 	}
 }
 
@@ -487,6 +535,31 @@ void GPUSPH::debugReadbackDensity(std::vector<glm::vec4>& out) const
 }
 
 /**
+ * @brief Reads back the force and XSPH buffers (debug/validate only).
+ * @param outForce Destination for the forces; resized to the particle count.
+ * @param outXsph Destination for the XSPH deltas; resized to the particle count.
+ */
+void GPUSPH::debugReadbackForces(std::vector<glm::vec4>& outForce,
+								 std::vector<glm::vec4>& outXsph) const
+{
+	outForce.clear();
+	outXsph.clear();
+	if (!m_initialized || m_particleCount == 0)
+		return;
+
+	glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+	const GLsizeiptr bytes =
+		static_cast<GLsizeiptr>(m_particleCount) * static_cast<GLsizeiptr>(sizeof(glm::vec4));
+	outForce.resize(m_particleCount);
+	outXsph.resize(m_particleCount);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_forceSSBO);
+	glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, bytes, outForce.data());
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_xsphVelSSBO);
+	glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, bytes, outXsph.data());
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+}
+
+/**
  * @brief Releases all OpenGL resources.
  *
  * Deletes every SSBO owned by the pipeline. Shader programs are released by
@@ -496,7 +569,7 @@ void GPUSPH::release()
 {
 	const GLuint ssbos[] = {m_particleSSBO,	m_densPressSSBO, m_forceSSBO,	 m_posPredSSBO,
 							m_cellIdSSBO,	m_sortedIdxSSBO, m_cellCountSSBO, m_cellStartSSBO,
-							m_cellCursorSSBO, m_blockSumsSSBO};
+							m_cellCursorSSBO, m_blockSumsSSBO, m_xsphVelSSBO};
 	glDeleteBuffers(sizeof(ssbos) / sizeof(ssbos[0]), ssbos);
 
 	m_particleSSBO = 0;
@@ -509,6 +582,7 @@ void GPUSPH::release()
 	m_cellStartSSBO = 0;
 	m_cellCursorSSBO = 0;
 	m_blockSumsSSBO = 0;
+	m_xsphVelSSBO = 0;
 
 	m_initialized	= false;
 	m_particleCount = 0;
