@@ -77,7 +77,7 @@ SUB_DIR_DEP =	$(DEP_DIR)/$(EXTER_DIR) $(DEP_DIR)/$(GLDIR) \
 
 
 
-SOURCES := $(WATER_DIR)/GPUMarchingCubes.cpp $(WATER_DIR)/Particles.cpp main.cpp
+SOURCES := $(WATER_DIR)/GPUMarchingCubes.cpp $(WATER_DIR)/GPUSPH.cpp $(WATER_DIR)/Particles.cpp main.cpp
 GLSOURCES := $(GLDIR)/gl.c
 WRAPSOURCES :=	$(CORE_DIR)/WWindow.cpp $(CORE_DIR)/Environment.cpp $(CORE_DIR)/Input.cpp \
                 $(RENDER_DIR)/Shader.cpp $(RENDER_DIR)/Mesh.cpp $(RENDER_DIR)/Renderer.cpp \
