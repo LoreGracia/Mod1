@@ -2,7 +2,7 @@
 
 /**
  * @file sph_clear_predict.comp
- * @brief Phase 6.1: Clears per-particle accumulators and computes predicted positions.
+ * @brief Clears per-particle accumulators and computes predicted positions.
  *
  * Pass 1 of the GPU SPH pipeline. For each particle it:
  *   1. Resets the force accumulator to gravity (mirrors the CPU solver, where
@@ -26,7 +26,7 @@ layout(local_size_x = 64) in;
  * @brief GPU representation of a particle, occupying 32 bytes (2 vec4s).
  * Identical to the struct in density_splat.comp, so the same SSBO can be
  * handed to the Marching Cubes splat pass without any copy or conversion
- * (zero-copy handoff, planned for Phase 6.6).
+ * (zero-copy handoff).
  */
 struct GPUParticle {
     vec4 posWeight; ///< xyz = position, w = splatWeight (0 = airborne drop, 1 = settled water).
@@ -66,7 +66,7 @@ void main() {
 
     // "force" acts as an acceleration: gravity is injected here, and the
     // pressure + viscosity + XSPH terms accumulate on top of it in the
-    // forces pass (Phase 6.4).
+    // forces pass (sph_forces.comp).
     forces[i] = vec4(0.0, uGravity, 0.0, 0.0);
 
     // Semi-implicit prediction: covers the full displacement of the substep

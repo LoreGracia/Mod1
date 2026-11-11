@@ -10,6 +10,7 @@
 /**
  * @file GPUSPH.hpp
  * @brief Defines the GPUSPH class, which runs the SPH physics entirely on the
+ * GPU through compute shaders.
  */
 
 /**
@@ -18,7 +19,8 @@
  *
  * Owns the GPU-side particle state (SoA layout spread over several SSBOs) and
  * dispatches the compute passes of the solver: Clear & Predict, GPU spatial
- *
+ * hash and Density & Pressure (forces and integration follow as further
+ * passes, see the TODO markers in update()).
  * The particle SSBO uses the same GPUParticle layout as the Marching Cubes
  * splat pass (2 x vec4), so it can be shared with GPUMarchingCubes without
  * CPU round-trips once the migration is complete.
@@ -50,6 +52,10 @@ public:
 		float maxSpeed	   = 10.f;    ///< Velocity clamp for stability.
 		float wallRestitution = 0.3f;  ///< Bounciness of the container walls.
 
+		bool  rainMode	   = false;  ///< Enables the rain airborne classification for splatWeight.
+		float rainSettleSpeed = 2.0f; ///< Speed above which a particle counts as airborne.
+		float rainAirBand  = 0.25f;  ///< Height band from the top where particles count as airborne.
+
 		glm::vec3 boundsMin{-1.f, 0.f, -1.f};  ///< Minimum bounds of the container.
 		glm::vec3 boundsMax{1.f, 3.f, 1.f};	  ///< Maximum bounds of the container.
 	};
@@ -73,10 +79,11 @@ public:
 	 * @param params Physics and grid parameters.
 	 * @param clearPredictPath Path to the Clear & Predict shader (sph_clear_predict.comp).
 	 * @param hashPath Path to the spatial hashing shader (sph_hash.comp).
+	 * @param densityPath Path to the density & pressure shader (sph_density.comp).
 	 * @return True if the shaders compiled and the buffers were created successfully.
 	 */
 	bool init(size_t maxParticles, const Params& params, const std::string& clearPredictPath,
-			  const std::string& hashPath);
+			  const std::string& hashPath, const std::string& densityPath);
 
 	/**
 	 * @brief Uploads the initial particle state (CPU -> GPU seeding).
@@ -92,9 +99,10 @@ public:
 	/**
 	 * @brief Runs one frame of the SPH pipeline on the GPU.
 	 *
-	 * Currently dispatches Clear & Predict + Spatial Hash per substep; the
-	 * density, forces and integration passes are plugged in during the
-	 * following Phase 6 steps (see the TODO markers).
+	 * Each substep dispatches Clear & Predict, the six counting-sort phases of
+	 * the spatial hash and the Density & Pressure pass; the forces and
+	 * integration passes are dispatched from here as they land (see the TODO
+	 * markers).
 	 *
 	 * @param dt Delta time in seconds.
 	 */
@@ -116,7 +124,7 @@ public:
 	/**
 	 * @brief Gets the particle SSBO handle (GPUParticle layout, std430).
 	 *
-	 * Intended for the Phase 6.6 zero-copy handoff to GPUMarchingCubes
+	 * Intended for the zero-copy handoff to GPUMarchingCubes
 	 * (density_splat.comp can consume this exact buffer).
 	 */
 	GLuint particleBuffer() const { return m_particleSSBO; }
@@ -142,6 +150,18 @@ public:
 	 * @return True if all checks pass.
 	 */
 	bool debugValidateSort() const;
+
+	/**
+	 * @brief Reads back the density/pressure buffer (debug/validate only).
+	 *
+	 * Retrieves DensPressBuffer as (density, pressure, splatWeight, 0) per
+	 * particle. Used by the offline validation harness; the render loop must
+	 * never stall on this.
+	 *
+	 * @note This introduces a CPU-GPU stall: NEVER call it in the render loop.
+	 * @param out Destination vector; resized to the particle count.
+	 */
+	void debugReadbackDensity(std::vector<glm::vec4>& out) const;
 
 	/**
 	 * @brief Releases all OpenGL resources.
@@ -182,10 +202,18 @@ private:
 	 */
 	void buildSpatialHash(float subDt);
 
+	/**
+	 * @brief Dispatches the Density & Pressure pass (sph_density.comp).
+	 *
+	 * Binds the SSBOs, sets the pass uniforms and issues the dispatch with a
+	 * trailing memory barrier, since the following passes read the results.
+	 */
+	void computeDensityPressure();
+
 	Params m_params;  ///< Current physics and grid parameters.
 
 	GLuint m_particleSSBO = 0;	 ///< GPUParticle[] state (binding 0).
-	GLuint m_densPressSSBO = 0;	 ///< vec4[] density/pressure (binding 1, Phase 6.3).
+	GLuint m_densPressSSBO = 0;	 ///< vec4[] density/pressure/splatWeight (binding 1).
 	GLuint m_forceSSBO = 0;		 ///< vec4[] forces (binding 2).
 	GLuint m_posPredSSBO = 0;	 ///< vec4[] predicted positions (binding 3).
 	GLuint m_cellIdSSBO = 0;	 ///< uint[] cell of each particle (binding 4).
@@ -197,6 +225,7 @@ private:
 
 	Shader m_clearPredictShader;	///< sph_clear_predict.comp.
 	Shader m_hashShader;			///< sph_hash.comp (phases multiplexed via uPhase).
+	Shader m_densityShader;			///< sph_density.comp (Poly6 density + equation of state).
 
 	glm::ivec3 m_gridSize{0};	 ///< Grid cells per axis.
 	int		   m_numCells = 0;	 ///< Total number of grid cells (gx*gy*gz).

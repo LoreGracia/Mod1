@@ -1,9 +1,10 @@
 /**
  * @file GPUSPH.cpp
  *
- * Dispatches the compute passes that replace the CPU solver: Clear & Predict
- * and the GPU spatial hash (counting sort over a uniform grid, which replaces
- * the CPU std::unordered_map of Particles::buildHash).
+ * Dispatches the compute passes that replace the CPU solver: Clear & Predict,
+ * the GPU spatial hash (counting sort over a uniform grid, which replaces the
+ * CPU std::unordered_map of Particles::buildHash) and the Density & Pressure
+ * pass (Poly6 kernel + equation of state over the sorted neighbor ranges).
  */
 
 #include <GPUSPH.hpp>
@@ -34,6 +35,9 @@ constexpr int HASH_WORKGROUP_SIZE = 1024;
 /** @brief Threads per workgroup used by sph_clear_predict.comp. */
 constexpr int PREDICT_WORKGROUP_SIZE = 64;
 
+/** @brief Threads per workgroup used by sph_density.comp. */
+constexpr int DENSITY_WORKGROUP_SIZE = 64;
+
 /**
  * @brief Computes the number of workgroups needed to cover n items.
  * @param n Number of items.
@@ -59,17 +63,18 @@ GPUSPH::~GPUSPH()
 /**
  * @brief Initializes the GPU SPH pipeline.
  *
- * Loads the two compute shaders of the current step, validates the uniform
+ * Loads the compute shaders of the current pipeline, validates the uniform
  * grid against the hierarchical scan limits, and allocates all SSBOs.
  *
  * @param maxParticles Capacity of the per-particle SSBOs.
  * @param params Physics and grid parameters.
  * @param clearPredictPath Path to the Clear & Predict shader.
  * @param hashPath Path to the spatial hashing shader.
+ * @param densityPath Path to the density & pressure shader.
  * @return True if the shaders compiled and the buffers were created successfully.
  */
 bool GPUSPH::init(size_t maxParticles, const Params& params, const std::string& clearPredictPath,
-				  const std::string& hashPath)
+				  const std::string& hashPath, const std::string& densityPath)
 {
 	if (m_initialized)
 		release();
@@ -85,6 +90,12 @@ bool GPUSPH::init(size_t maxParticles, const Params& params, const std::string& 
 	// Load the spatial hashing compute shader (sph_hash.comp)
 	if (!m_hashShader.loadComputeFromFile(hashPath)) {
 		std::fprintf(stderr, "GPUSPH: failed to load '%s'\n", hashPath.c_str());
+		return false;
+	}
+
+	// Load the density & pressure compute shader (sph_density.comp)
+	if (!m_densityShader.loadComputeFromFile(densityPath)) {
+		std::fprintf(stderr, "GPUSPH: failed to load '%s'\n", densityPath.c_str());
 		return false;
 	}
 
@@ -156,7 +167,7 @@ void GPUSPH::createBuffers()
 
 	// ── Per-particle state (SoA layout) ─────────────────────────────
 	createSSBO(m_particleSSBO, particleBytes);   // binding 0: GPUParticle[]
-	createSSBO(m_densPressSSBO, vec4Bytes);	   // binding 1: Phase 6.3
+	createSSBO(m_densPressSSBO, vec4Bytes);	   // binding 1: vec4[] density/pressure/splatWeight
 	createSSBO(m_forceSSBO, vec4Bytes);		   // binding 2
 	createSSBO(m_posPredSSBO, vec4Bytes);	   // binding 3
 	createSSBO(m_cellIdSSBO, uintBytes);		   // binding 4
@@ -294,10 +305,44 @@ void GPUSPH::buildSpatialHash(float subDt)
 }
 
 /**
+ * @brief Dispatches the Density & Pressure pass (sph_density.comp).
+ *
+ * One invocation per particle: 27-cell sweep over the sorted ranges of the
+ * spatial hash, Poly6 density accumulation over the predicted positions and
+ * the equation of state with the CPU-solver clamps. The result lands in
+ * DensPressBuffer, ready for the forces pass.
+ */
+void GPUSPH::computeDensityPressure()
+{
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_PARTICLES, m_particleSSBO);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_DENS_PRESS, m_densPressSSBO);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_POS_PRED, m_posPredSSBO);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_SORTED_IDX, m_sortedIdxSSBO);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_CELL_COUNT, m_cellCountSSBO);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_CELL_START, m_cellStartSSBO);
+
+	m_densityShader.use();
+	m_densityShader.setInt("uParticleCount", static_cast<int>(m_particleCount));
+	m_densityShader.setFloat("uH", m_params.h);
+	m_densityShader.setFloat("uMass", m_params.particleMass);
+	m_densityShader.setFloat("uRestDensity", m_params.restDensity);
+	m_densityShader.setFloat("uStiffness", m_params.stiffness);
+	m_densityShader.setInt("uRainMode", m_params.rainMode ? 1 : 0);
+	m_densityShader.setFloat("uSettleSpeed", m_params.rainSettleSpeed);
+	m_densityShader.setFloat("uAirY", m_params.boundsMax.y - m_params.rainAirBand);
+	m_densityShader.setIVec3("uGridSize", m_gridSize);
+	m_densityShader.setVec3("uGridMin", m_params.boundsMin);
+	m_densityShader.setFloat("uCellSize", m_cellSize);
+	m_densityShader.dispatch(groupsFor(m_particleCount, DENSITY_WORKGROUP_SIZE), 1, 1);
+	glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+}
+
+/**
  * @brief Runs one frame of the SPH pipeline on the GPU.
  *
- * Each substep currently executes Clear & Predict + Spatial Hash; the
- * remaining passes of the roadmap are dispatched from here as they land.
+ * Each substep currently executes Clear & Predict + Spatial Hash + Density &
+ * Pressure; the remaining passes of the roadmap are dispatched from here as
+ * they land.
  *
  * @param dt Delta time in seconds.
  */
@@ -312,13 +357,12 @@ void GPUSPH::update(float dt)
 	const float subDt = dt / static_cast<float>(m_params.substeps);
 	for (int s = 0; s < m_params.substeps; ++s) {
 		buildSpatialHash(subDt);
+		computeDensityPressure();
 
-		// TODO Phase 6.3: sph_density.comp — Poly6 density + pressure, reading
-		// sortedIdx/cellStart/cellCount (27-cell sweep) into m_densPressSSBO.
-		// TODO Phase 6.4: sph_forces.comp — Spiky pressure + Laplacian viscosity
-		// + XSPH, accumulating on m_forceSSBO (gravity already injected).
-		// TODO Phase 6.5: sph_integrate.comp — semi-implicit Euler, speed clamp
-		// and boundary collisions, writing m_particleSSBO in place.
+		// TODO: sph_forces.comp — Spiky pressure + Laplacian viscosity + XSPH,
+		// accumulating on m_forceSSBO (gravity already injected).
+		// TODO: sph_integrate.comp — semi-implicit Euler, speed clamp and
+		// boundary collisions, writing m_particleSSBO in place.
 	}
 }
 
@@ -422,6 +466,24 @@ bool GPUSPH::debugValidateSort() const
 	if (ok)
 		std::fprintf(stderr, "[GPUSPH] validate: spatial hash OK (N=%zu, cells=%zu)\n", n, cells);
 	return ok;
+}
+
+/**
+ * @brief Reads back the density/pressure buffer (debug/validate only).
+ * @param out Destination vector; resized to the particle count.
+ */
+void GPUSPH::debugReadbackDensity(std::vector<glm::vec4>& out) const
+{
+	out.clear();
+	if (!m_initialized || m_particleCount == 0)
+		return;
+
+	glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+	out.resize(m_particleCount);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_densPressSSBO);
+	glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+					   static_cast<GLsizeiptr>(m_particleCount * sizeof(glm::vec4)), out.data());
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 
 /**

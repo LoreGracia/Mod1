@@ -2,7 +2,7 @@
 
 /**
  * @file sph_hash.comp
- * @brief Phase 6.2: GPU spatial hashing via counting sort over a uniform grid.
+ * @brief GPU spatial hashing via counting sort over a uniform grid.
  *
  * Replaces the CPU std::unordered_map spatial hash (Particles::buildHash).
  * Instead of hashing cells into a key-value map with dynamic per-key vectors,
@@ -38,7 +38,8 @@
  *                                      sortedIdx[dst] = i (cursor armed at
  *                                      cellStart[c], so dst is absolute).
  *
- * After Phase 5, the neighbor search (Phase 6.3) never needs a map lookup:
+ * After Phase 5, the neighbor search (sph_density.comp and later passes)
+ * never needs a map lookup:
  * for cell c, the candidate particles are
  * sortedIdx[cellStart[c] .. cellStart[c] + cellCount[c]].
  */
