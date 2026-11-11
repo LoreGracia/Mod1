@@ -1,0 +1,240 @@
+#version 430 core
+
+/**
+ * @file sph_hash.comp
+ * @brief Phase 6.2: GPU spatial hashing via counting sort over a uniform grid.
+ *
+ * Replaces the CPU std::unordered_map spatial hash (Particles::buildHash).
+ * Instead of hashing cells into a key-value map with dynamic per-key vectors,
+ * all particles are COUNT-SORTED by grid cell into a flat index buffer, so
+ * that the particles of each cell occupy a contiguous range:
+ *
+ *     [ cellStart[c], cellStart[c] + cellCount[c] )
+ *
+ * Why a counting sort instead of a radix sort (or the CPU hash map):
+ *   - The simulation domain is bounded, so the key range (number of grid
+ *     cells) is small and known upfront: cells are DIRECT array indices
+ *     (no hash collisions, no pointer chasing, no dynamic memory).
+ *   - It runs in O(N + C) with six short dispatches, versus the several
+ *     histogram/scatter passes a 32/64-bit radix sort would need.
+ *   - It groups by cell exactly like a sort by cell key would, which is all
+ *     the neighbor search needs (stability is irrelevant for SPH).
+ *
+ * The pipeline is multiplexed through the uPhase uniform (one program, six
+ * phases; the dispatch grid differs per phase):
+ *
+ *   Phase 0 (grid: numCells)  CLEAR    cellCount[c] = 0.
+ *   Phase 1 (grid: N)         COUNT    cellIds[i] = cell(predicted[i]);
+ *                                      atomicAdd(cellCount[cellIds[i]], 1).
+ *   Phase 2 (grid: numBlocks) SCAN     work-efficient Blelloch exclusive scan
+ *                                      of cellCount per 1024-wide workgroup;
+ *                                      local exclusive prefix -> cellStart,
+ *                                      segment total -> blockSums.
+ *   Phase 3 (grid: 1)         SCAN     exclusive scan of blockSums in place
+ *                                      (requires numBlocks <= 1024).
+ *   Phase 4 (grid: numBlocks) OFFSET   cellStart[c] += blockSums[workgroup];
+ *                                      cellCursor[c] = cellStart[c].
+ *   Phase 5 (grid: N)         SCATTER  dst = atomicAdd(cellCursor[cell], 1);
+ *                                      sortedIdx[dst] = i (cursor armed at
+ *                                      cellStart[c], so dst is absolute).
+ *
+ * After Phase 5, the neighbor search (Phase 6.3) never needs a map lookup:
+ * for cell c, the candidate particles are
+ * sortedIdx[cellStart[c] .. cellStart[c] + cellCount[c]].
+ */
+
+#define WORKGROUP_SIZE 1024
+
+layout(local_size_x = WORKGROUP_SIZE) in;
+
+// ─── SSBOs (bindings must match GPUSPH.cpp) ──────────────────────────
+layout(std430, binding = 3) buffer PosPredBuffer {
+    vec4 predicted[]; ///< xyz = predicted position (written by sph_clear_predict.comp).
+};
+
+layout(std430, binding = 4) buffer CellIdBuffer {
+    uint cellIds[]; ///< Cell index of each particle (written in Phase 1).
+};
+
+layout(std430, binding = 5) buffer SortedIndexBuffer {
+    uint sortedIdx[]; ///< Particle indices grouped by cell (written in Phase 5).
+};
+
+layout(std430, binding = 6) buffer CellCountBuffer {
+    uint cellCount[]; ///< Number of particles per cell (written in Phases 0/1).
+};
+
+layout(std430, binding = 7) buffer CellStartBuffer {
+    uint cellStart[]; ///< Exclusive prefix: first slot of each cell in sortedIdx.
+};
+
+layout(std430, binding = 8) buffer CellCursorBuffer {
+    uint cellCursor[]; ///< Write cursors used by the scatter (Phase 5).
+};
+
+layout(std430, binding = 9) buffer BlockSumsBuffer {
+    uint blockSums[]; ///< Per-workgroup segment totals of the scan (Phase 2),
+                      ///< then block start offsets after Phase 3.
+};
+
+// ─── Uniforms ────────────────────────────────────────────────────────
+uniform int   uPhase;         ///< Pipeline phase selector (0..5).
+uniform int   uParticleCount; ///< Number of valid particles (not the SSBO capacity).
+uniform int   uNumCells;      ///< Total number of grid cells (gx*gy*gz).
+uniform int   uNumBlocks;     ///< Scan workgroups covering the grid (ceil(numCells/1024)).
+uniform ivec3 uGridSize;      ///< Grid cells per axis.
+uniform vec3  uGridMin;      ///< Minimum world-space bound of the grid.
+uniform float uCellSize;     ///< Cell edge length (>= smoothing radius h).
+
+// ─── Shared memory (scan phases only) ─────────────────────────────────
+shared uint temp[WORKGROUP_SIZE]; ///< Blelloch scan scratch: one element per thread.
+
+/**
+ * @brief Maps a world-space position to its linear grid cell index.
+ *
+ * Coordinates outside the domain (particles that escaped the bounds between
+ * collision responses) are clamped to the border cells: they become false
+ * neighbor candidates, which is harmless because the neighbor passes always
+ * re-check the true distance r < h.
+ *
+ * @param p World-space position (usually a predicted position).
+ * @return Linear cell index in [0, uNumCells).
+ */
+uint cellIndexOf(vec3 p)
+{
+    ivec3 c = clamp(ivec3(floor((p - uGridMin) / uCellSize)), ivec3(0), uGridSize - ivec3(1));
+    return uint(c.x + uGridSize.x * (c.y + uGridSize.y * c.z));
+}
+
+/**
+ * @brief Work-efficient Blelloch EXCLUSIVE scan of the shared array `temp`.
+ *
+ * Implements the classic two-phase (up-sweep / down-sweep) Blelloch scan over
+ * the full WORKGROUP_SIZE elements, converting the inclusive partial sums into
+ * an exclusive prefix. The last element is cleared to 0 (its old value is the
+ * segment total), so on return temp[i] holds the exclusive prefix of the
+ * WORKGROUP_SIZE loaded elements.
+ *
+ * @return The TOTAL (inclusive sum) of the scanned segment. Only meaningful
+ * for local invocation 0; every other invocation returns 0.
+ *
+ * @note All invocations of the workgroup must call this function (barriers
+ * inside uniform control flow only).
+ */
+uint scanSharedExclusive()
+{
+    uint li     = gl_LocalInvocationID.x;
+    uint offset = 1u;
+
+    // ── Up-sweep (reduce): builds partial sums bottom-up. ────────────
+    // Thread li combines the pair (i - offset, i) where i is the right
+    // edge of its subtree: temp[n-1] ends up holding the segment total.
+    for (uint d = WORKGROUP_SIZE >> 1; d > 0u; d >>= 1u) {
+        if (li < d) {
+            uint i = 2u * offset * (li + 1u) - 1u;
+            temp[i] += temp[i - offset];
+        }
+        barrier();
+        offset <<= 1u;
+    }
+
+    // Capture the total, then clear the root to turn the inclusive scan
+    // into an exclusive one (Blelloch's trick).
+    uint total = 0u;
+    if (li == 0u) {
+        total                     = temp[WORKGROUP_SIZE - 1u];
+        temp[WORKGROUP_SIZE - 1u] = 0u;
+    }
+    barrier();
+
+    // ── Down-sweep (propagate): distributes the prefixes. ────────────
+    // Pair (left, right): left takes right's old value, right accumulates.
+    // Mirrors the up-sweep path in reverse, producing exclusive prefixes.
+    for (uint d = 1u; d < WORKGROUP_SIZE; d <<= 1u) {
+        offset >>= 1u;
+        if (li < d) {
+            uint i = 2u * offset * (li + 1u) - 1u;
+            uint t = temp[i - offset];
+            temp[i - offset] = temp[i];
+            temp[i] += t;
+        }
+        barrier();
+    }
+    return total;
+}
+
+/**
+ * @brief Main execution: multiplexes the six counting-sort phases.
+ */
+void main() {
+    // ── Phase 0: clear the per-cell counters ─────────────────────────
+    if (uPhase == 0) {
+        uint c = gl_GlobalInvocationID.x;
+        if (c < uint(uNumCells))
+            cellCount[c] = 0u;
+        return;
+    }
+
+    // ── Phase 1: count particles per cell (from predicted positions) ──
+    if (uPhase == 1) {
+        uint i = gl_GlobalInvocationID.x;
+        if (i >= uint(uParticleCount))
+            return;
+        uint cell = cellIndexOf(predicted[i].xyz);
+        cellIds[i] = cell;
+        atomicAdd(cellCount[cell], 1u);
+        return;
+    }
+
+    // ── Phase 2: local Blelloch scan of cellCount per block ──────────
+    if (uPhase == 2) {
+        uint li  = gl_LocalInvocationID.x;
+        uint gid = gl_GlobalInvocationID.x;
+        temp[li] = (gid < uint(uNumCells)) ? cellCount[gid] : 0u;
+        barrier();
+        uint total = scanSharedExclusive();
+        if (li == 0u)
+            blockSums[gl_WorkGroupID.x] = total;
+        if (gid < uint(uNumCells))
+            cellStart[gid] = temp[li]; // local prefix; globalized in Phase 4
+        return;
+    }
+
+    // ── Phase 3: exclusive scan of the block sums (single block) ─────
+    // After this phase, blockSums[b] = global start offset of block b.
+    if (uPhase == 3) {
+        uint li  = gl_LocalInvocationID.x;
+        temp[li] = (li < uint(uNumBlocks)) ? blockSums[li] : 0u;
+        barrier();
+        scanSharedExclusive();
+        if (li < uint(uNumBlocks))
+            blockSums[li] = temp[li];
+        return;
+    }
+
+    // ── Phase 4: globalize cellStart and arm the scatter cursors ──────
+    if (uPhase == 4) {
+        uint gid = gl_GlobalInvocationID.x;
+        if (gid < uint(uNumCells)) {
+            cellStart[gid] += blockSums[gl_WorkGroupID.x];
+            cellCursor[gid] = cellStart[gid];
+        }
+        return;
+    }
+
+    // ── Phase 5: scatter particles into their cell range ─────────────
+    // Each particle atomically claims an absolute slot: the cursor was armed
+    // at cellStart[c] by Phase 4, so atomicAdd returns positions that walk
+    // exactly the contiguous range of cell c. atomics resolve contention
+    // inside a cell; ranges never overlap, so the result is a complete
+    // grouping without any collisions.
+    if (uPhase == 5) {
+        uint i = gl_GlobalInvocationID.x;
+        if (i >= uint(uParticleCount))
+            return;
+        uint cell = cellIds[i];
+        uint dst  = atomicAdd(cellCursor[cell], 1u); // already absolute
+        sortedIdx[dst] = i;
+        return;
+    }
+}
