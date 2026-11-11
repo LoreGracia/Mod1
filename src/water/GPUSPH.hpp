@@ -40,24 +40,24 @@ public:
 	 */
 	struct Params
 	{
-		float h			   = 0.12f;   ///< Smoothing radius (kernel support). Also the base grid cell size.
-		float restDensity  = 400.f;   ///< Rest density of the fluid.
-		float stiffness	   = 150.f;   ///< Gas constant for the pressure calculation.
-		float viscosity	   = 0.08f;   ///< Viscosity coefficient.
-		float xsph		   = 0.10f;   ///< XSPH velocity smoothing factor.
-		float gravity	   = -9.8f;   ///< Gravity acceleration (Y axis).
-		float damping	   = 0.999f;  ///< Velocity damping factor per substep.
-		float particleMass = 0.2f;    ///< Mass of a single particle.
-		int	  substeps	   = 4;	   ///< Number of physics substeps per frame.
-		float maxSpeed	   = 10.f;    ///< Velocity clamp for stability.
-		float wallRestitution = 0.3f;  ///< Bounciness of the container walls.
+		float h = 0.12f;  ///< Smoothing radius (kernel support). Also the base grid cell size.
+		float restDensity	  = 400.f;	 ///< Rest density of the fluid.
+		float stiffness		  = 150.f;	 ///< Gas constant for the pressure calculation.
+		float viscosity		  = 0.08f;	 ///< Viscosity coefficient.
+		float xsph			  = 0.10f;	 ///< XSPH velocity smoothing factor.
+		float gravity		  = -9.8f;	 ///< Gravity acceleration (Y axis).
+		float damping		  = 0.999f;	 ///< Velocity damping factor per substep.
+		float particleMass	  = 0.2f;	 ///< Mass of a single particle.
+		int	  substeps		  = 4;		 ///< Number of physics substeps per frame.
+		float maxSpeed		  = 10.f;	 ///< Velocity clamp for stability.
+		float wallRestitution = 0.3f;	 ///< Bounciness of the container walls.
 
-		bool  rainMode	   = false;  ///< Enables the rain airborne classification for splatWeight.
-		float rainSettleSpeed = 2.0f; ///< Speed above which a particle counts as airborne.
-		float rainAirBand  = 0.25f;  ///< Height band from the top where particles count as airborne.
+		bool  rainMode = false;	 ///< Enables the rain airborne classification for splatWeight.
+		float rainSettleSpeed = 2.0f;  ///< Speed above which a particle counts as airborne.
+		float rainAirBand = 0.25f;	///< Height band from the top where particles count as airborne.
 
 		glm::vec3 boundsMin{-1.f, 0.f, -1.f};  ///< Minimum bounds of the container.
-		glm::vec3 boundsMax{1.f, 3.f, 1.f};	  ///< Maximum bounds of the container.
+		glm::vec3 boundsMax{1.f, 3.f, 1.f};	   ///< Maximum bounds of the container.
 	};
 
 	/** @brief Default constructor. */
@@ -190,17 +190,19 @@ private:
 	/** @brief SSBO binding points shared by all SPH compute passes. */
 	enum Binding : GLuint
 	{
-		BINDING_PARTICLES = 0,   ///< ParticleBuffer: GPUParticle[] (posWeight, velAge).
-		BINDING_DENS_PRESS = 1,  ///< DensPressBuffer: vec4[] (density, pressure, splatWeight, unused).
-		BINDING_FORCES = 2,	   ///< ForceBuffer: vec4[] (force.xyz, unused).
-		BINDING_POS_PRED = 3,   ///< PosPredBuffer: vec4[] (predicted position, unused).
-		BINDING_CELL_IDS = 4,	   ///< CellIdBuffer: uint[] cell index of each particle.
-		BINDING_SORTED_IDX = 5,  ///< SortedIndexBuffer: uint[] particles grouped by cell.
-		BINDING_CELL_COUNT = 6,  ///< CellCountBuffer: uint[] particles per cell.
-		BINDING_CELL_START = 7,  ///< CellStartBuffer: uint[] exclusive prefix (range start).
-		BINDING_CELL_CURSOR = 8,///< CellCursorBuffer: uint[] scatter write cursors.
-		BINDING_BLOCK_SUMS = 9, ///< BlockSumsBuffer: uint[] scan segment totals/offsets.
-		BINDING_XSPH_VEL = 10   ///< XsphVelBuffer: vec4[] XSPH velocity delta (applied when integrating).
+		BINDING_PARTICLES = 0,	///< ParticleBuffer: GPUParticle[] (posWeight, velAge).
+		BINDING_DENS_PRESS =
+			1,	///< DensPressBuffer: vec4[] (density, pressure, splatWeight, unused).
+		BINDING_FORCES		= 2,  ///< ForceBuffer: vec4[] (force.xyz, unused).
+		BINDING_POS_PRED	= 3,  ///< PosPredBuffer: vec4[] (predicted position, unused).
+		BINDING_CELL_IDS	= 4,  ///< CellIdBuffer: uint[] cell index of each particle.
+		BINDING_SORTED_IDX	= 5,  ///< SortedIndexBuffer: uint[] particles grouped by cell.
+		BINDING_CELL_COUNT	= 6,  ///< CellCountBuffer: uint[] particles per cell.
+		BINDING_CELL_START	= 7,  ///< CellStartBuffer: uint[] exclusive prefix (range start).
+		BINDING_CELL_CURSOR = 8,  ///< CellCursorBuffer: uint[] scatter write cursors.
+		BINDING_BLOCK_SUMS	= 9,  ///< BlockSumsBuffer: uint[] scan segment totals/offsets.
+		BINDING_XSPH_VEL =
+			10	///< XsphVelBuffer: vec4[] XSPH velocity delta (applied when integrating).
 	};
 
 	/** @brief Creates and allocates all SSBOs for the current capacity/grid. */
@@ -240,29 +242,29 @@ private:
 
 	Params m_params;  ///< Current physics and grid parameters.
 
-	GLuint m_particleSSBO = 0;	 ///< GPUParticle[] state (binding 0).
-	GLuint m_densPressSSBO = 0;	 ///< vec4[] density/pressure/splatWeight (binding 1).
-	GLuint m_forceSSBO = 0;		 ///< vec4[] forces (binding 2).
-	GLuint m_posPredSSBO = 0;	 ///< vec4[] predicted positions (binding 3).
-	GLuint m_cellIdSSBO = 0;	 ///< uint[] cell of each particle (binding 4).
-	GLuint m_sortedIdxSSBO = 0;	 ///< uint[] sorted particle indices (binding 5).
-	GLuint m_cellCountSSBO = 0;	 ///< uint[] per-cell counts (binding 6).
-	GLuint m_cellStartSSBO = 0;	 ///< uint[] per-cell range start (binding 7).
-	GLuint m_cellCursorSSBO = 0;	 ///< uint[] scatter cursors (binding 8).
-	GLuint m_blockSumsSSBO = 0;	 ///< uint[] scan block sums (binding 9).
-	GLuint m_xsphVelSSBO = 0;	 ///< vec4[] XSPH velocity delta (binding 10).
+	GLuint m_particleSSBO	= 0;  ///< GPUParticle[] state (binding 0).
+	GLuint m_densPressSSBO	= 0;  ///< vec4[] density/pressure/splatWeight (binding 1).
+	GLuint m_forceSSBO		= 0;  ///< vec4[] forces (binding 2).
+	GLuint m_posPredSSBO	= 0;  ///< vec4[] predicted positions (binding 3).
+	GLuint m_cellIdSSBO		= 0;  ///< uint[] cell of each particle (binding 4).
+	GLuint m_sortedIdxSSBO	= 0;  ///< uint[] sorted particle indices (binding 5).
+	GLuint m_cellCountSSBO	= 0;  ///< uint[] per-cell counts (binding 6).
+	GLuint m_cellStartSSBO	= 0;  ///< uint[] per-cell range start (binding 7).
+	GLuint m_cellCursorSSBO = 0;  ///< uint[] scatter cursors (binding 8).
+	GLuint m_blockSumsSSBO	= 0;  ///< uint[] scan block sums (binding 9).
+	GLuint m_xsphVelSSBO	= 0;  ///< vec4[] XSPH velocity delta (binding 10).
 
-	Shader m_clearPredictShader;	///< sph_clear_predict.comp.
-	Shader m_hashShader;			///< sph_hash.comp (phases multiplexed via uPhase).
-	Shader m_densityShader;			///< sph_density.comp (Poly6 density + equation of state).
-	Shader m_forcesShader;			///< sph_forces.comp (Spiky + Laplacian forces + XSPH delta).
+	Shader m_clearPredictShader;  ///< sph_clear_predict.comp.
+	Shader m_hashShader;		  ///< sph_hash.comp (phases multiplexed via uPhase).
+	Shader m_densityShader;		  ///< sph_density.comp (Poly6 density + equation of state).
+	Shader m_forcesShader;		  ///< sph_forces.comp (Spiky + Laplacian forces + XSPH delta).
 
-	glm::ivec3 m_gridSize{0};	 ///< Grid cells per axis.
-	int		   m_numCells = 0;	 ///< Total number of grid cells (gx*gy*gz).
-	int		   m_numBlocks = 0; ///< Scan workgroups covering the grid (ceil(numCells/1024)).
-	float	   m_cellSize = 0.f; ///< Effective cell edge length (>= h, see rebuildGrid).
+	glm::ivec3 m_gridSize{0};	   ///< Grid cells per axis.
+	int		   m_numCells  = 0;	   ///< Total number of grid cells (gx*gy*gz).
+	int		   m_numBlocks = 0;	   ///< Scan workgroups covering the grid (ceil(numCells/1024)).
+	float	   m_cellSize  = 0.f;  ///< Effective cell edge length (>= h, see rebuildGrid).
 
-	size_t m_maxParticles	= 0;		///< Capacity of the per-particle SSBOs.
-	size_t m_particleCount	= 0;		///< Valid particles in the SSBOs.
-	bool   m_initialized	= false;	///< Flag indicating if the pipeline is ready.
+	size_t m_maxParticles  = 0;		 ///< Capacity of the per-particle SSBOs.
+	size_t m_particleCount = 0;		 ///< Valid particles in the SSBOs.
+	bool   m_initialized   = false;	 ///< Flag indicating if the pipeline is ready.
 };

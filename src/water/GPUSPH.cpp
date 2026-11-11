@@ -27,8 +27,8 @@ namespace
  */
 struct GPUParticle
 {
-	glm::vec4 posWeight;	///< xyz = position, w = splatWeight.
-	glm::vec4 velAge;		///< xyz = velocity, w = age.
+	glm::vec4 posWeight;  ///< xyz = position, w = splatWeight.
+	glm::vec4 velAge;	  ///< xyz = velocity, w = age.
 };
 
 /** @brief Threads per workgroup used by every phase of sph_hash.comp. */
@@ -112,8 +112,8 @@ bool GPUSPH::init(size_t maxParticles, const Params& params, const std::string& 
 		return false;
 	}
 
-	m_maxParticles   = maxParticles;
-	m_particleCount  = 0;
+	m_maxParticles	= maxParticles;
+	m_particleCount = 0;
 	createBuffers();
 	m_initialized = true;
 
@@ -137,7 +137,7 @@ bool GPUSPH::init(size_t maxParticles, const Params& params, const std::string& 
  */
 void GPUSPH::rebuildGrid()
 {
-	m_cellSize		 = m_params.h;
+	m_cellSize = m_params.h;
 	const glm::vec3 extent =
 		glm::max(m_params.boundsMax - m_params.boundsMin, glm::vec3(m_cellSize));
 	glm::ivec3 g = glm::clamp(glm::ivec3(glm::ceil(extent / m_cellSize)), glm::ivec3(1),
@@ -150,8 +150,8 @@ void GPUSPH::rebuildGrid()
 					   glm::ivec3(HASH_WORKGROUP_SIZE));
 	}
 
-	m_gridSize  = g;
-	m_numCells  = g.x * g.y * g.z;
+	m_gridSize	= g;
+	m_numCells	= g.x * g.y * g.z;
 	m_numBlocks = groupsFor(static_cast<size_t>(m_numCells), HASH_WORKGROUP_SIZE);
 }
 
@@ -168,7 +168,7 @@ void GPUSPH::createBuffers()
 	const GLsizeiptr uintBytes	   = static_cast<GLsizeiptr>(m_maxParticles) * sizeof(GLuint);
 
 	rebuildGrid();
-	const GLsizeiptr cellBytes  = static_cast<GLsizeiptr>(m_numCells) * sizeof(GLuint);
+	const GLsizeiptr cellBytes	= static_cast<GLsizeiptr>(m_numCells) * sizeof(GLuint);
 	const GLsizeiptr blockBytes = static_cast<GLsizeiptr>(m_numBlocks) * sizeof(GLuint);
 
 	// Helper: allocate one zero-filled SSBO.
@@ -179,21 +179,21 @@ void GPUSPH::createBuffers()
 	};
 
 	// ── Per-particle state (SoA layout) ─────────────────────────────
-	createSSBO(m_particleSSBO, particleBytes);   // binding 0: GPUParticle[]
-	createSSBO(m_densPressSSBO, vec4Bytes);	   // binding 1: vec4[] density/pressure/splatWeight
-	createSSBO(m_forceSSBO, vec4Bytes);		   // binding 2
-	createSSBO(m_posPredSSBO, vec4Bytes);	   // binding 3
-	createSSBO(m_cellIdSSBO, uintBytes);		   // binding 4
-	createSSBO(m_sortedIdxSSBO, uintBytes);	   // binding 5
+	createSSBO(m_particleSSBO, particleBytes);	// binding 0: GPUParticle[]
+	createSSBO(m_densPressSSBO, vec4Bytes);		// binding 1: vec4[] density/pressure/splatWeight
+	createSSBO(m_forceSSBO, vec4Bytes);			// binding 2
+	createSSBO(m_posPredSSBO, vec4Bytes);		// binding 3
+	createSSBO(m_cellIdSSBO, uintBytes);		// binding 4
+	createSSBO(m_sortedIdxSSBO, uintBytes);		// binding 5
 
 	// ── Spatial hash grid (counting sort) ────────────────────────────
-	createSSBO(m_cellCountSSBO, cellBytes);	   // binding 6
-	createSSBO(m_cellStartSSBO, cellBytes);	   // binding 7
-	createSSBO(m_cellCursorSSBO, cellBytes);	   // binding 8
-	createSSBO(m_blockSumsSSBO, blockBytes);	   // binding 9
+	createSSBO(m_cellCountSSBO, cellBytes);	  // binding 6
+	createSSBO(m_cellStartSSBO, cellBytes);	  // binding 7
+	createSSBO(m_cellCursorSSBO, cellBytes);  // binding 8
+	createSSBO(m_blockSumsSSBO, blockBytes);  // binding 9
 
 	// ── XSPH velocity delta (applied by the integration pass) ────────
-	createSSBO(m_xsphVelSSBO, vec4Bytes);		   // binding 10: vec4[] XSPH delta
+	createSSBO(m_xsphVelSSBO, vec4Bytes);  // binding 10: vec4[] XSPH delta
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
@@ -225,8 +225,8 @@ void GPUSPH::uploadParticles(const std::vector<Particle>& particles)
 		return;
 
 	if (particles.size() > m_maxParticles) {
-		std::fprintf(stderr, "GPUSPH: uploadParticles(%zu) exceeds capacity %zu\n", particles.size(),
-					 m_maxParticles);
+		std::fprintf(stderr, "GPUSPH: uploadParticles(%zu) exceeds capacity %zu\n",
+					 particles.size(), m_maxParticles);
 		return;
 	}
 
@@ -242,8 +242,7 @@ void GPUSPH::uploadParticles(const std::vector<Particle>& particles)
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_particleSSBO);
 	glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-					static_cast<GLsizeiptr>(staging.size() * sizeof(GPUParticle)),
-					staging.data());
+					static_cast<GLsizeiptr>(staging.size() * sizeof(GPUParticle)), staging.data());
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 
@@ -432,7 +431,7 @@ bool GPUSPH::debugValidateSort() const
 	const size_t n	   = m_particleCount;
 	const size_t cells = static_cast<size_t>(m_numCells);
 
-	std::vector<GLuint>  counts(cells), starts(cells), sorted(n), ids(n);
+	std::vector<GLuint>	 counts(cells), starts(cells), sorted(n), ids(n);
 	std::vector<GLfloat> pred4(n * 4);
 
 	auto readback = [](GLuint ssbo, void* dst, GLsizeiptr bytes) {
@@ -493,12 +492,12 @@ bool GPUSPH::debugValidateSort() const
 	// 5) cellIds matches the cell recomputed from the predicted positions.
 	if (ok) {
 		for (size_t i = 0; i < n; ++i) {
-			const glm::vec3 p(pred4[i * 4 + 0], pred4[i * 4 + 1], pred4[i * 4 + 2]);
-			const glm::ivec3 c = glm::clamp(
-				glm::ivec3(glm::floor((p - m_params.boundsMin) / m_cellSize)), glm::ivec3(0),
-				m_gridSize - glm::ivec3(1));
-			const GLuint expected = static_cast<GLuint>(
-				c.x + m_gridSize.x * (c.y + m_gridSize.y * c.z));
+			const glm::vec3	 p(pred4[i * 4 + 0], pred4[i * 4 + 1], pred4[i * 4 + 2]);
+			const glm::ivec3 c =
+				glm::clamp(glm::ivec3(glm::floor((p - m_params.boundsMin) / m_cellSize)),
+						   glm::ivec3(0), m_gridSize - glm::ivec3(1));
+			const GLuint expected =
+				static_cast<GLuint>(c.x + m_gridSize.x * (c.y + m_gridSize.y * c.z));
 			if (ids[i] != expected) {
 				std::fprintf(stderr,
 							 "[GPUSPH] validate: particle %zu hashed to cell %u, expected %u "
@@ -567,22 +566,22 @@ void GPUSPH::debugReadbackForces(std::vector<glm::vec4>& outForce,
  */
 void GPUSPH::release()
 {
-	const GLuint ssbos[] = {m_particleSSBO,	m_densPressSSBO, m_forceSSBO,	 m_posPredSSBO,
-							m_cellIdSSBO,	m_sortedIdxSSBO, m_cellCountSSBO, m_cellStartSSBO,
+	const GLuint ssbos[] = {m_particleSSBO,	  m_densPressSSBO, m_forceSSBO,		m_posPredSSBO,
+							m_cellIdSSBO,	  m_sortedIdxSSBO, m_cellCountSSBO, m_cellStartSSBO,
 							m_cellCursorSSBO, m_blockSumsSSBO, m_xsphVelSSBO};
 	glDeleteBuffers(sizeof(ssbos) / sizeof(ssbos[0]), ssbos);
 
-	m_particleSSBO = 0;
-	m_densPressSSBO = 0;
-	m_forceSSBO = 0;
-	m_posPredSSBO = 0;
-	m_cellIdSSBO = 0;
-	m_sortedIdxSSBO = 0;
-	m_cellCountSSBO = 0;
-	m_cellStartSSBO = 0;
+	m_particleSSBO	 = 0;
+	m_densPressSSBO	 = 0;
+	m_forceSSBO		 = 0;
+	m_posPredSSBO	 = 0;
+	m_cellIdSSBO	 = 0;
+	m_sortedIdxSSBO	 = 0;
+	m_cellCountSSBO	 = 0;
+	m_cellStartSSBO	 = 0;
 	m_cellCursorSSBO = 0;
-	m_blockSumsSSBO = 0;
-	m_xsphVelSSBO = 0;
+	m_blockSumsSSBO	 = 0;
+	m_xsphVelSSBO	 = 0;
 
 	m_initialized	= false;
 	m_particleCount = 0;
