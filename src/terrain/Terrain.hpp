@@ -28,8 +28,11 @@ class Terrain
             std::shared_ptr<Mesh>   plane;
             float rotY = 0.f;
             float rotX = 0.f;
-            float size = 0.5;
-            bool parse(const std::string& mapPath);
+            float size = 2;
+            std::vector<glm::vec3> points;
+            
+            void generateTerrain();
+            void parse(const std::string& mapPath);
 
             const std::vector<float> extractNumbers(const std::string& input);
             void initHooks();
@@ -43,7 +46,7 @@ class Terrain
         Terrain& operator=(const Terrain&) = delete;
         ~Terrain() = default;
 
-        WWindow &addWindow(WWindow::Config &cfg);
+        void addWindow(WWindow::Config &cfg);
 
         void render();
 };
