@@ -365,11 +365,24 @@ void GPUMarchingCubes::render(const glm::mat4& viewProj, const glm::vec3& camera
 	m_meshShader.setVec3("uCameraPos", cameraPos);
 	m_meshShader.setVec3("uSunDir", glm::normalize(glm::vec3(0.55f, 1.0f, 0.35f)));
 	m_meshShader.setVec3("uSunColor", glm::vec3(1.00f, 0.95f, 0.82f));
+	// Procedural sky sampled by the water reflection vector: warm horizon,
+	// deep zenith and a warm sun halo.
+	m_meshShader.setVec3("uSkyHorizon", glm::vec3(0.82f, 0.66f, 0.50f));
+	m_meshShader.setVec3("uSkyZenith", glm::vec3(0.06f, 0.18f, 0.42f));
+	m_meshShader.setVec3("uSunGlowColor", glm::vec3(1.00f, 0.83f, 0.58f));
 	m_meshShader.setVec3("uWaterDeep", glm::vec3(0.015f, 0.10f, 0.28f));
 	m_meshShader.setVec3("uWaterShallow", glm::vec3(0.10f, 0.48f, 0.78f));
 	m_meshShader.setVec3("uBoundsMin", m_boundsMin);
 	m_meshShader.setVec3("uBoundsMax", m_boundsMax);
 	m_meshShader.setFloat("uTime", time);
+
+	// Procedural foam driven by surface curvature, the wave-field flow and
+	// fractal noise. Tuned to appear as sparse patches on the wave crests.
+	m_meshShader.setVec3("uFoamColor", glm::vec3(0.92f, 0.96f, 1.00f));
+	m_meshShader.setFloat("uFoamIntensity", 1.40f);
+	m_meshShader.setFloat("uFoamThreshold", 0.35f);
+	m_meshShader.setFloat("uFoamScale", 4.50f);
+	m_meshShader.setFloat("uFoamSpeed", 2.50f);
 
 	glBindVertexArray(m_emptyVAO);
 	glBindBuffer(GL_DRAW_INDIRECT_BUFFER, m_drawCmdSSBO);
