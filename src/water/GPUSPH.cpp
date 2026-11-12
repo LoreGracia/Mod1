@@ -460,6 +460,78 @@ void GPUSPH::update(float dt)
 }
 
 /**
+ * @brief Renders the airborne rain drops as GL_POINTS.
+ *
+ * Maps the particle SSBO onto the point vertex attributes (48-byte
+ * interleaved GPUParticle records) and draws every particle; the point
+ * shader performs the filtering in the vertex stage: only rain-drop
+ * flagged particles survive, minus the settled ones. The barrier
+ * guarantees the vertex fetch sees the state written by the last compute
+ * substep. The density and the splat weight attributes come from the
+ * density/pressure SSBO (vec4 records) so the size modulation and the
+ * settled-water classification need no CPU readback.
+ *
+ * @param shader Point shader (waterVertex.glsl + waterFrag.frag).
+ * @param viewProj The combined view-projection matrix.
+ */
+void GPUSPH::renderRainDrops(Shader& shader, const glm::mat4& viewProj)
+{
+	if (!m_initialized || m_particleCount == 0)
+		return;
+
+	// SSBO writes from the last substep must be visible to vertex fetches.
+	glMemoryBarrier(GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
+
+	constexpr GLsizei kStride = sizeof(float) * 12;	 // GPUParticle: 3 x vec4 = 48 bytes.
+
+	// A buffer object can feed vertex attributes while remaining bound as an
+	// SSBO: the pointers capture the current GL_ARRAY_BUFFER binding and the
+	// VAO stores them. Configured on every call so a reallocation of the SSBO
+	// can never leave the VAO referencing a dead handle.
+	if (m_rainVAO == 0)
+		glGenVertexArrays(1, &m_rainVAO);
+	glBindVertexArray(m_rainVAO);
+	// Particle SSBO (stride 48): position at offset 0, velocity at offset 16
+	// and the rain-drop flag (flags.x) at offset 32.
+	glBindBuffer(GL_ARRAY_BUFFER, m_particleSSBO);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, kStride, reinterpret_cast<const void*>(0));
+	glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, kStride, reinterpret_cast<const void*>(16));
+	glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, kStride, reinterpret_cast<const void*>(32));
+	// Density/pressure SSBO (stride 16): density is its x component and the
+	// settled-water splat weight is its z component.
+	glBindBuffer(GL_ARRAY_BUFFER, m_densPressSSBO);
+	glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, sizeof(float) * 4,
+						   reinterpret_cast<const void*>(0));
+	glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, sizeof(float) * 4,
+						   reinterpret_cast<const void*>(8));
+	glEnableVertexAttribArray(0);
+	glEnableVertexAttribArray(1);
+	glEnableVertexAttribArray(2);
+	glEnableVertexAttribArray(3);
+	glEnableVertexAttribArray(4);
+
+	shader.use();
+	shader.setMat4("uViewProj", viewProj);
+	shader.setFloat("uPointSize", m_params.rainPointSize);
+	shader.setVec3("uColorLow", m_params.rainColor);
+	shader.setVec3("uColorHigh", m_params.rainColor);
+	shader.setFloat("uAlpha", m_params.rainAlpha);
+	shader.setFloat("uDensityMin", m_params.restDensity * 0.9f);
+	shader.setFloat("uDensityMax", m_params.restDensity * 1.3f);
+	// Settled-drop hiding: drops classified as puddle water by the density
+	// pass (splatWeight > 0.5) are culled by the vertex shader. The shader
+	// re-checks the speed with this uniform, so it must use the same
+	// threshold as the density classification (rainSettleSpeed); otherwise
+	// drops between rainSplashSpeed and rainSettleSpeed would be marked as
+	// puddle water by the GPU pass but still drawn as points.
+	shader.setFloat("uSplashSpeed", m_params.rainSettleSpeed);
+	glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(m_particleCount));
+
+	glBindVertexArray(0);
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+/**
  * @brief Validates the spatial hash with a synchronous CPU readback.
  *
  * Executes the five structural checks documented in the header. Any failure
@@ -642,8 +714,8 @@ void GPUSPH::debugReadbackParticles(std::vector<glm::vec4>& outPosWeight,
 /**
  * @brief Releases all OpenGL resources.
  *
- * Deletes every SSBO owned by the pipeline. Shader programs are released by
- * their own destructors.
+ * Deletes every SSBO owned by the pipeline and the rain-drop VAO. Shader
+ * programs are released by their own destructors.
  */
 void GPUSPH::release()
 {
@@ -651,6 +723,11 @@ void GPUSPH::release()
 							m_cellIdSSBO,	  m_sortedIdxSSBO, m_cellCountSSBO, m_cellStartSSBO,
 							m_cellCursorSSBO, m_blockSumsSSBO, m_xsphVelSSBO};
 	glDeleteBuffers(sizeof(ssbos) / sizeof(ssbos[0]), ssbos);
+
+	if (m_rainVAO) {
+		glDeleteVertexArrays(1, &m_rainVAO);
+		m_rainVAO = 0;
+	}
 
 	m_particleSSBO	 = 0;
 	m_densPressSSBO	 = 0;

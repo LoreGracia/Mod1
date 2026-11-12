@@ -22,8 +22,9 @@
  * hash, Density & Pressure, Forces & XSPH and Integration (collisions and
  * rain recycling included).
  * The particle SSBO uses the same GPUParticle layout as the Marching Cubes
- * splat pass (2 x vec4), so it can be shared with GPUMarchingCubes without
- * CPU round-trips once the migration is complete.
+ * splat pass (3 x vec4, 48 bytes), so it can be shared with
+ * GPUMarchingCubes without CPU round-trips, and the airborne rain drops can
+ * be rendered straight from it as GL_POINTS.
  *
  * @note This class is non-copyable due to its ownership of unique GPU resources
  * and Shader objects. Use std::shared_ptr or std::unique_ptr if needed.
@@ -55,6 +56,11 @@ public:
 		bool  rainMode = false;	 ///< Enables the rain airborne classification for splatWeight.
 		float rainSettleSpeed = 2.0f;  ///< Speed above which a particle counts as airborne.
 		float rainAirBand = 0.25f;	///< Height band from the top where particles count as airborne.
+
+		float rainPointSize = 6.0f;	///< Point size (pixels) of the airborne rain drops.
+		float rainAlpha		= 0.75f;	///< Alpha of the airborne rain drops.
+		glm::vec3 rainColor{0.55f, 0.80f, 1.0f};	///< Color of the airborne rain drops.
+		float rainSplashSpeed = 0.6f;	///< Speed below which a settled drop is hidden.
 
 		glm::vec3 boundsMin{-1.f, 0.f, -1.f};  ///< Minimum bounds of the container.
 		glm::vec3 boundsMax{1.f, 3.f, 1.f};	   ///< Maximum bounds of the container.
@@ -111,6 +117,30 @@ public:
 	void update(float dt);
 
 	/**
+	 * @brief Renders the airborne rain drops as GL_POINTS.
+	 *
+	 * Reads the particle SSBO directly through vertex attributes (48-byte
+	 * interleaved GPUParticle records, no staging copy and no CPU readback).
+	 * Only airborne drops are drawn: the integration pass classifies
+	 * splatWeight from the rain-drop flag, the particle velocity and the
+	 * height band, and the vertex shader culls the settled particles, which
+	 * are rendered by the Marching Cubes mesh instead.
+	 *
+		 * @note Requires GL_PROGRAM_POINT_SIZE enabled.
+	 * @param shader Point shader (waterVertex.glsl + waterFrag.frag).
+	 * @param viewProj The combined view-projection matrix.
+	 *
+	 * The point shader receives every particle and performs the filtering in
+	 * the vertex stage: only rain-drop flagged particles are drawn (all the
+	 * other particles belong to the water mesh), and drops classified as
+	 * settled water by the density pass (splatWeight > 0.5) moving slower
+	 * than rainSplashSpeed are hidden as puddle. The density and splat
+	 * weight attributes are sourced from the density/pressure SSBO so the
+	 * point size modulation and the classification need no CPU readback.
+	 */
+	void renderRainDrops(Shader& shader, const glm::mat4& viewProj);
+
+	/**
 	 * @brief Sets new physics/grid parameters.
 	 *
 	 * Rebuilds the uniform grid and reallocates the cell-sized SSBOs when the
@@ -122,6 +152,12 @@ public:
 
 	/** @brief Gets a const reference to the current parameters. */
 	const Params& params() const { return m_params; }
+
+	/**
+	 * @brief Toggles the rain mode (airborne classification + drop recycling).
+	 * @param on True to enable the rain behavior, false to disable it.
+	 */
+	void setRainMode(bool on) { m_params.rainMode = on; }
 
 	/**
 	 * @brief Gets the particle SSBO handle (GPUParticle layout, std430).
@@ -282,6 +318,7 @@ private:
 	GLuint m_cellCursorSSBO = 0;  ///< uint[] scatter cursors (binding 8).
 	GLuint m_blockSumsSSBO	= 0;  ///< uint[] scan block sums (binding 9).
 	GLuint m_xsphVelSSBO	= 0;  ///< vec4[] XSPH velocity delta (binding 10).
+	GLuint m_rainVAO		= 0;  ///< VAO mapping the particle SSBO to point attributes.
 
 	Shader m_clearPredictShader;  ///< sph_clear_predict.comp.
 	Shader m_hashShader;		  ///< sph_hash.comp (phases multiplexed via uPhase).

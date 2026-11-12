@@ -221,6 +221,25 @@ void GPUMarchingCubes::uploadParticles(const std::vector<Particle>& particles)
 }
 
 /**
+ * @brief Binds an externally owned particle SSBO (zero-copy handoff).
+ *
+ * Once called, generateMesh() reads the given buffer (GPU SPH solver
+ * particle state) instead of the CPU-uploaded SSBO.
+ *
+ * @param bufferId OpenGL handle of the external particle SSBO.
+ * @param particleCount Number of valid particles in the buffer.
+ */
+void GPUMarchingCubes::setExternalParticleBuffer(GLuint bufferId, GLuint particleCount)
+{
+	if (!m_initialized || bufferId == 0)
+		return;
+
+	m_externalParticleSSBO  = bufferId;
+	m_externalParticleCount = particleCount;
+	m_useExternalParticles  = true;
+}
+
+/**
  * @brief Executes the full mesh generation pipeline on the GPU.
  *
  * 1. Clears the 3D density texture (essential to prevent accumulation).
@@ -257,7 +276,13 @@ void GPUMarchingCubes::generateMesh()
 	glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
 	// ── 2. Splatting pass: particles -> 3D texture ─────────────────
-	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, m_particleSSBO);
+	// Zero-copy handoff: with an external particle SSBO bound (produced by
+	// the GPU SPH solver), consume it directly instead of the CPU-uploaded
+	// buffer; the per-frame uploadParticles() call is skipped entirely.
+	const GLuint particleSSBO  = m_useExternalParticles ? m_externalParticleSSBO : m_particleSSBO;
+	const GLuint particleCount = m_useExternalParticles ? m_externalParticleCount : m_particleCount;
+
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, particleSSBO);
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, m_drawCmdSSBO);
 	glBindImageTexture(0, m_densityTex, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
 
@@ -272,9 +297,9 @@ void GPUMarchingCubes::generateMesh()
 	m_splatShader.setFloat("uSplatMaxHeight", m_splatMaxHeight);
 	m_splatShader.setFloat("uSettleSpeed", m_settleSpeed);
 	m_splatShader.setFloat("uSplatYScale", m_splatYScale);
-	m_splatShader.setInt("uParticleCount", static_cast<int>(m_particleCount));
+	m_splatShader.setInt("uParticleCount", static_cast<int>(particleCount));
 
-	GLuint splatGroups = (m_particleCount + kSplatGroup - 1u) / kSplatGroup;
+	GLuint splatGroups = (particleCount + kSplatGroup - 1u) / kSplatGroup;
 	if (splatGroups == 0u)
 		splatGroups = 1u;  // at least 1 to reset the command
 	m_splatShader.dispatch(splatGroups, 1, 1);

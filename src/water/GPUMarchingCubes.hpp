@@ -20,7 +20,9 @@
  * This class owns the 3D density texture, the compute shaders (splatting and
  * Marching Cubes), the vertex/draw command SSBOs, and the VAO used for
  * indirect rendering. It transforms CPU particles into a rendered water mesh
- * entirely on the GPU.
+ * entirely on the GPU. When an external particle SSBO is bound through
+ * setExternalParticleBuffer(), the splat pass consumes GPU-resident
+ * particles directly and the CPU upload path is skipped entirely.
  *
  * @note This class is non-copyable due to its ownership of unique GPU resources
  * and Shader objects. Use std::shared_ptr or std::unique_ptr if needed.
@@ -66,6 +68,20 @@ public:
 	 * @param particles The CPU particle data to upload.
 	 */
 	void uploadParticles(const std::vector<Particle>& particles);
+
+	/**
+	 * @brief Binds an externally owned particle SSBO (zero-copy handoff).
+	 *
+	 * The splat pass consumes the given buffer directly as its binding 0
+	 * instead of this class' own SSBO, so no per-frame CPU upload happens
+	 * while an external buffer is set. The buffer must contain GPUParticle
+	 * records (48 bytes: posWeight, velAge, flags) with std430 layout, as
+	 * written by the GPU SPH solver.
+	 *
+	 * @param bufferId OpenGL handle of the external particle SSBO.
+	 * @param particleCount Number of valid particles in the buffer.
+	 */
+	void setExternalParticleBuffer(GLuint bufferId, GLuint particleCount);
 
 	/**
 	 * @brief Executes the mesh generation pipeline on the GPU.
@@ -179,4 +195,8 @@ private:
 	GLuint m_maxVertices   = 0;		 ///< Capacity of the vertex SSBO (grid.x*grid.y*grid.z*15).
 	GLuint m_particleCount = 0;		 ///< Valid particles currently in the SSBO.
 	bool   m_initialized   = false;	 ///< Flag indicating if the pipeline is ready.
+
+	GLuint m_externalParticleSSBO  = 0;	///< External particle SSBO (zero-copy handoff), 0 = unused.
+	GLuint m_externalParticleCount = 0;	///< Valid particles in the external SSBO.
+	bool   m_useExternalParticles  = false;	///< True while an external SSBO is bound.
 };

@@ -11,6 +11,7 @@
 #include <Entity.hpp>
 #include <Environment.hpp>
 #include <GPUMarchingCubes.hpp>
+#include <GPUSPH.hpp>
 #include <Input.hpp>
 #include <Mesh.hpp>
 #include <Particle.hpp>
@@ -48,6 +49,7 @@ int main()
 			Renderer						  renderer;
 			std::shared_ptr<Shader>			  shader;
 			std::shared_ptr<Particles>		  water;
+			std::shared_ptr<GPUSPH>			  gpuSPH;
 			std::shared_ptr<GPUMarchingCubes> marchingCubes;
 			Particles::Mode					  mode = Particles::Mode::UniformRise;
 			float							  time = 0.f;
@@ -55,6 +57,8 @@ int main()
 
 		env.setInit([&](WWindow& w) {
 			st.shader = std::make_shared<Shader>();
+			// Puntos de lluvia: el vertex shader filtra por el flag rainDrop
+			// (solo las gotas se dibujan; el resto pertenece a la malla).
 			if (!st.shader->loadFromFile("src/water/shader/waterVertex.glsl",
 										 "src/water/shader/waterFrag.frag")) {
 				std::fprintf(stderr, "shader failed\n");
@@ -127,6 +131,45 @@ int main()
 			}
 			st.water->init(1000, st.mode, pcfg);
 
+			// Solver GPU: las partículas CPU solo siembran el estado inicial;
+			// después de este upload, el estado GPU es autoritativo y la
+			// física corre 100% en compute shaders.
+			GPUSPH::Params gcfg;
+			gcfg.h				 = pcfg.h;
+			gcfg.restDensity	 = pcfg.restDensity;
+			gcfg.stiffness		 = pcfg.stiffness;
+			gcfg.viscosity		 = pcfg.viscosity;
+			gcfg.gravity		 = pcfg.gravity;
+			gcfg.damping		 = pcfg.damping;
+			gcfg.substeps		 = pcfg.substeps;
+			gcfg.particleMass	 = pcfg.particleMass;
+			gcfg.wallRestitution = pcfg.wallRestitution;
+			gcfg.boundsMin		 = pcfg.boundsMin;
+			gcfg.boundsMax		 = pcfg.boundsMax;
+			gcfg.rainMode		 = (st.mode == Particles::Mode::Rain);
+			gcfg.rainSettleSpeed = pcfg.rainSettleSpeed;
+			gcfg.rainAirBand	 = pcfg.rainAirBand;
+			gcfg.rainPointSize	 = pcfg.rainPointSize;
+			gcfg.rainAlpha		 = pcfg.rainAlpha;
+			gcfg.rainColor		 = pcfg.rainColor;
+			gcfg.rainSplashSpeed = pcfg.rainSplashSpeed;
+
+			st.gpuSPH = std::make_shared<GPUSPH>();
+			if (!st.gpuSPH->init(1000, gcfg, "src/water/shader/sph_clear_predict.comp",
+								 "src/water/shader/sph_hash.comp", "src/water/shader/sph_density.comp",
+								 "src/water/shader/sph_forces.comp",
+								 "src/water/shader/sph_integrate.comp")) {
+				std::fprintf(stderr, "Failed to init GPU SPH\n");
+				return;
+			}
+			st.gpuSPH->uploadParticles(st.water->getParticles());
+
+			// Handoff sin copia: el pase de splat consume el SSBO del solver
+			// directamente (mismo layout GPUParticle); ya no hay upload por
+			// frame de partículas.
+			st.marchingCubes->setExternalParticleBuffer(
+				st.gpuSPH->particleBuffer(), static_cast<GLuint>(st.gpuSPH->particleCount()));
+
 			// (Opcional) colisión con terreno:
 			// st.water->setTerrainHeight([](float x, float z) {
 			//     return 0.2f * std::sin(x * 3.f) * std::cos(z * 3.f);
@@ -147,27 +190,24 @@ int main()
 			if (in.isKeyPressed(Key::Code::Escape))
 				w.requestClose();
 
-			// Cambiar modo
-			if (in.isKeyPressed(Key::Code::Num1)) {
-				st.mode = Particles::Mode::UniformRise;
-				st.water->reset(st.mode);
-			}
-			if (in.isKeyPressed(Key::Code::Num2)) {
-				st.mode = Particles::Mode::Wave;
-				st.water->reset(st.mode);
-			}
-			if (in.isKeyPressed(Key::Code::Num3)) {
-				st.mode = Particles::Mode::Rain;
-				st.water->reset(st.mode);
-			}
-			if (in.isKeyPressed(Key::Code::R)) {
-				st.water->reset(st.mode);
-			}
+			// Cambiar modo: re-spawn en CPU (semilla) + re-seed del estado GPU.
+			auto resetSim = [&](Particles::Mode m) {
+				st.mode = m;
+				st.water->reset(m);
+				st.gpuSPH->setRainMode(m == Particles::Mode::Rain);
+				st.gpuSPH->uploadParticles(st.water->getParticles());
+			};
+			if (in.isKeyPressed(Key::Code::Num1))
+				resetSim(Particles::Mode::UniformRise);
+			if (in.isKeyPressed(Key::Code::Num2))
+				resetSim(Particles::Mode::Wave);
+			if (in.isKeyPressed(Key::Code::Num3))
+				resetSim(Particles::Mode::Rain);
+			if (in.isKeyPressed(Key::Code::R))
+				resetSim(st.mode);
 
-			// Física
-			st.water->update(dt);
-			st.water->uploadToGPU();
-			st.marchingCubes->uploadParticles(st.water->getParticles());
+			// Física (100% GPU): ya no hay update/upload CPU por frame.
+			st.gpuSPH->update(dt);
 			st.time += dt;
 
 			// Cámara
@@ -195,7 +235,7 @@ int main()
 			if (in.scrollDelta() != 0.0)
 				st.cam.orbit(0.f, 0.f, -static_cast<float>(in.scrollDelta()) * 0.5f);
 			if (in.isKeyPressed(Key::Code::Space)) {
-				st.water->reset(st.mode);
+				resetSim(st.mode);
 				std::printf("[reset] Simulación reiniciada con la tecla Espacio\n");
 			}
 		});
@@ -234,7 +274,7 @@ int main()
 			// superficie y parecían flotar.
 			glDepthMask(GL_TRUE);
 			if (st.mode == Particles::Mode::Rain)
-				st.water->renderRainDrops(*st.shader, vp);
+				st.gpuSPH->renderRainDrops(*st.shader, vp);
 
 			glDepthMask(GL_FALSE);
 			st.marchingCubes->render(vp, st.cam.position(), st.time);
