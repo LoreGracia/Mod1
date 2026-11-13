@@ -104,16 +104,19 @@ int main()
 			// Fase 3.6/3.7: charco plano. El iso está en unidades de
 			// "partículas efectivas": el pico de UNA partícula es 1.0, así
 			// que con 1.10 ninguna partícula aislada crea superficie.
-			st.marchingCubes->setIsoLevel(1.10f);
+			st.marchingCubes->setIsoLevel(1.05f);
 			st.marchingCubes->setDensityScale(2000.0f);
-			st.marchingCubes->setParticleRadius(0.28f);
+			st.marchingCubes->setParticleRadius(0.30f);
 			st.marchingCubes->setFallSpeedCutoff(-1.0f);
 			// Fase 3.7: solo agua acumulada en el fondo + anisotropía Y
 			// (YScale > 1 comprime la distancia vertical y aplana la lámina).
 			st.marchingCubes->setSplatHeight(0.15f);
 			st.marchingCubes->setSplatMaxHeight(0.22f);
 			st.marchingCubes->setSettleSpeed(0.5f);
-			st.marchingCubes->setSplatYScale(2.0f);
+			st.marchingCubes->setSplatYScale(2.5f);
+			// Fixed level for the constant-volume pool: slightly above the
+			// container floor, matching the splat band used by the mesh.
+			st.marchingCubes->setWaterLevel(pcfg.boundsMin.y + 0.2f);
 			if (const char* m = std::getenv("WATER_MODE")) {
 				switch (std::atoi(m)) {
 				case 1:
@@ -208,6 +211,7 @@ int main()
 
 			// Física (100% GPU): ya no hay update/upload CPU por frame.
 			st.gpuSPH->update(dt);
+			st.marchingCubes->setWaterEnergy(st.gpuSPH->waterEnergy());
 			st.time += dt;
 
 			// Cámara

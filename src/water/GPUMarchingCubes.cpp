@@ -318,6 +318,8 @@ void GPUMarchingCubes::generateMesh()
 	m_computeShader.setIVec3("uGridSize", m_gridSize);
 	m_computeShader.setFloat("uIsoLevel", m_isoLevel);
 	m_computeShader.setFloat("uDensityScale", m_densityScale);
+	// Read-time six-neighbour blur that smooths per-particle density bumps.
+	m_computeShader.setFloat("uDensityBlur", 2.0f);
 
 	m_computeShader.dispatchForGrid(static_cast<GLuint>(m_gridSize.x),
 									static_cast<GLuint>(m_gridSize.y),
@@ -375,12 +377,17 @@ void GPUMarchingCubes::render(const glm::mat4& viewProj, const glm::vec3& camera
 	m_meshShader.setVec3("uBoundsMin", m_boundsMin);
 	m_meshShader.setVec3("uBoundsMax", m_boundsMax);
 	m_meshShader.setFloat("uTime", time);
+	// Fluid energy gates the micro-waves so a settled pool becomes flat.
+	m_meshShader.setFloat("uWaterEnergy", m_waterEnergy);
+	// Height the vertex stage collapses to when the fluid is at rest.
+	m_meshShader.setFloat("uWaterLevel", m_waterLevel);
 
 	// Procedural foam driven by surface curvature, the wave-field flow and
-	// fractal noise. Tuned to appear as sparse patches on the wave crests.
+	// fractal noise. Tuned for broad, abundant coverage across the wave
+	// surface with soft-edged patches.
 	m_meshShader.setVec3("uFoamColor", glm::vec3(0.92f, 0.96f, 1.00f));
-	m_meshShader.setFloat("uFoamIntensity", 1.40f);
-	m_meshShader.setFloat("uFoamThreshold", 0.35f);
+	m_meshShader.setFloat("uFoamIntensity", 1.00f);
+	m_meshShader.setFloat("uFoamThreshold", 0.45f);
 	m_meshShader.setFloat("uFoamScale", 4.50f);
 	m_meshShader.setFloat("uFoamSpeed", 2.50f);
 

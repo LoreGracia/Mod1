@@ -24,6 +24,7 @@ uniform vec3  uWaterShallow;  ///< Color of shallow water.
 uniform vec3  uBoundsMin;     ///< Minimum bounds of the water volume.
 uniform vec3  uBoundsMax;     ///< Maximum bounds of the water volume.
 uniform float uTime;          ///< Current time for wave animation.
+uniform float uWaterEnergy;   ///< Mean squared particle speed; gates the wave amplitude.
 
 uniform vec3  uFoamColor;      ///< Base color of the procedural foam.
 uniform float uFoamIntensity;  ///< Global strength of the foam layer.
@@ -138,7 +139,7 @@ float foamFbm(vec3 p) {
  */
 vec3 proceduralSky(vec3 dir, vec3 sunDir) {
     float up = max(dir.y, 0.0);
-    vec3 sky = mix(uSkyHorizon, uSkyZenith, pow(up, 0.55));
+    vec3 sky = mix(uSkyHorizon, uSkyZenith, up);
 
     float sunGlow = pow(max(dot(dir, sunDir), 0.0), 128.0);
     sky += uSunGlowColor * sunGlow;
@@ -159,6 +160,11 @@ void main() {
     float dist   = length(uCameraPos - vWorldPos);
     float detail = 1.0 / (1.0 + 0.15 * dist);
 
+    // Wave attenuation driven by the fluid energy: a settled pool (low mean
+    // squared speed) fades the micro-waves out until the surface is flat,
+    // while an active body of water restores them at full strength.
+    float waveAmount = smoothstep(0.4, 1.2, uWaterEnergy);
+
     // Geometric normal before the wave perturbation: its screen-space
     // derivatives approximate the curvature of the Marching Cubes surface
     // without the high-frequency micro-wave detail dominating the mask.
@@ -166,12 +172,17 @@ void main() {
 
     // Normal perturbation by micro-waves.
     vec2 g = waveGrad(vWorldPos.xz, uTime);
-    N = normalize(N + vec3(-g.x, 0.0, -g.y) * 1.5 * detail);
+    N = normalize(N + vec3(-g.x, 0.0, -g.y) * 1.5 * detail * waveAmount);
 
-    // Extra fine noise to break the periodicity of the sine waves.
+    // Extra fine noise to break the periodicity of the sine waves. It scales
+    // with the same energy factor so a resting surface stays perfectly flat.
     float micro = sin(vWorldPos.x * 41.0 + uTime * 4.1)
                 * sin(vWorldPos.z * 37.0 - uTime * 3.3);
-    N = normalize(N + vec3(micro, 0.0, micro) * 0.025 * detail);
+    N = normalize(N + vec3(micro, 0.0, micro) * 0.025 * detail * waveAmount);
+
+    // Perceptual mirror trick: with no wave activity, bias the shading normal
+    // towards world-up so a settled pool reflects the sky as a perfect plane.
+    N = normalize(mix(N, vec3(0.0, 1.0, 0.0), 1.0 - waveAmount));
 
     // ── Procedural foam signal ───────────────────────────────────────
     // Curvature proxy: variation of the geometric normal across the screen.
@@ -184,7 +195,7 @@ void main() {
     const float velDt = 0.05;
     float waveVel = abs(waveH(vWorldPos.xz, uTime + velDt) -
                         waveH(vWorldPos.xz, uTime - velDt)) / (2.0 * velDt);
-    float flow = length(g) + waveVel;
+    float flow = (length(g) + waveVel) * waveAmount;
 
     // Steep surfaces (crests and troughs) accumulate more foam.
     float slope = 1.0 - clamp(N.y, 0.0, 1.0);
@@ -193,9 +204,11 @@ void main() {
     float noise   = foamFbm(vec3(vWorldPos.xz * uFoamScale, uTime * 0.35));
     float patches = smoothstep(-0.2, 0.9, noise);
 
-    // Combined foam mask in [0, 1].
+    // Combined foam mask in [0, 1]. The curvature and flow terms are boosted
+    // so crests, troughs and high-velocity slopes produce foam over a wider
+    // area, and the wider smoothstep transition softens the patch edges.
     float foamSignal = curvature * 8.0 + slope * 1.5 + flow * uFoamSpeed;
-    float foam = smoothstep(uFoamThreshold, uFoamThreshold + 0.35, foamSignal * patches);
+    float foam = smoothstep(uFoamThreshold, uFoamThreshold + 0.5, foamSignal * patches);
     foam = clamp(foam * uFoamIntensity, 0.0, 1.0);
 
     vec3 H = normalize(L + V);

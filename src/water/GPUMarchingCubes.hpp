@@ -134,6 +134,19 @@ public:
 	/** @brief Sets the vertical compression factor for the metaball kernel (>1 flattens). */
 	void setSplatYScale(float s) { m_splatYScale = s; }
 
+	/**
+	 * @brief Sets the fluid energy used to attenuate the shader micro-waves.
+	 * @param energy Mean squared particle speed of the simulation, usually
+	 * queried from GPUSPH::waterEnergy().
+	 */
+	void setWaterEnergy(float energy) { m_waterEnergy = energy; }
+
+	/**
+	 * @brief Sets the world-space height of the settled water surface.
+	 * @param level Height used by the vertex shader when flattening the mesh.
+	 */
+	void setWaterLevel(float level) { m_waterLevel = level; }
+
 	/** @brief Gets the grid resolution per axis. */
 	int resolution() const { return m_resolution; }
 
@@ -181,7 +194,7 @@ private:
 	// Iso level in "effective particles" units: 1.0 = one particle's peak.
 	// Values >1.0 mean a single particle never generates a surface; multiple
 	// overlapping particles (compact puddle) produce the sheet.
-	float m_isoLevel		= 1.10f;
+	float m_isoLevel		= 1.05f;
 	float m_densityScale	= 2000.0f;	///< Density normalized to uint for f
 	float m_particleRadius	= 0.25f;	///< Radius of influence for the metaball.
 	float m_fallSpeedCutoff = -1.0f;	///< vy < this => no splat (falling drop).
@@ -189,7 +202,9 @@ private:
 	float m_splatHeight	   = 0.15f;	 ///< Relative to boundsMin.y.
 	float m_splatMaxHeight = 0.22f;	 ///< Absolute ceiling (never splat above).
 	float m_settleSpeed	   = 0.5f;	 ///< |vy| <= this => settled.
-	float m_splatYScale	   = 3.0f;	 ///< >1 compresses Y and flattens the iso.
+	float m_splatYScale	   = 2.5f;	 ///< >1 compresses Y and flattens the iso.
+	float m_waterEnergy	   = 0.0f;	 ///< Mean squared particle speed; gates the micro-waves.
+	float m_waterLevel	   = 0.0f;	 ///< World-space height used to flatten the settled mesh.
 
 	GLuint m_maxParticles  = 0;		 ///< Current capacity of the particle SSBO.
 	GLuint m_maxVertices   = 0;		 ///< Capacity of the vertex SSBO (grid.x*grid.y*grid.z*15).
