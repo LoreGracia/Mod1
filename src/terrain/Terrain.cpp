@@ -91,7 +91,7 @@ void Terrain::getNormals()
 	}
 
 	// Normalizar y convertir a formato float.
-	// normals.reserve(vertices.size() * 3);
+	normals.reserve(vertices.size() * 3);
 
 	for (const auto& normal : vertexNormals) {
 		glm::vec3 n = normal;
@@ -151,7 +151,7 @@ void Terrain::generateTerrain()
 
 	for (const auto index : triangulation.triangles)
 		indices.push_back(static_cast<uint32_t>(index));
-	normals.reserve(vertices.size() * 3);
+
 	getNormals();
 
 	// Save terrain result
@@ -244,6 +244,9 @@ void Terrain::initHooks()
 			rotX = 0.f;
 			rotY = 0.f;
 		}
+		if (in.isKeyPressed(Key::Code::F)) {
+			wireframe = !wireframe;
+		}
 	});
 }
 
@@ -295,8 +298,16 @@ void Terrain::render()
 
 		shader->use();
 		shader->setMat4("uViewProj", mvp);
+		shader->setMat4("uModel", model);
+
+		glPolygonMode(
+			GL_FRONT_AND_BACK,
+			wireframe ? GL_LINE : GL_FILL
+		);
 
 		plane->draw();
+
+		glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 	});
 
 	env.run();

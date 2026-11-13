@@ -7,6 +7,7 @@
 
 #include <glm.hpp>
 #include <gtc/type_ptr.hpp>
+#include <glad/gl.h>
 
 #include <Camera.hpp>
 #include <Environment.hpp>
@@ -34,7 +35,7 @@ class Terrain
             std::vector<uint32_t>  indices;
 			std::vector<glm::vec3> vertices;
             std::vector<float> normals;
-
+            bool wireframe = false;
 
             void getNormals();
             void generateTerrain();

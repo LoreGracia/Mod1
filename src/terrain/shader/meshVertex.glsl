@@ -1,9 +1,12 @@
-
 #version 330 core
 layout(location=0) in vec3 aPos;
+layout(location=1) in vec3 aNormal;
 uniform mat4 uViewProj;
-out vec3 vColor;
+uniform mat4 uModel;
+out vec3 vNormal;
+out float vHeight;
 void main(){
-  vColor = aPos * 0.5 + 0.5;
   gl_Position = uViewProj * vec4(aPos, 1.0);
+  vNormal = normalize(mat3(uModel) * aNormal);
+  vHeight = aPos.y;
 }
