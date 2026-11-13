@@ -174,6 +174,14 @@ public:
 	int numCells() const { return m_numCells; }
 
 	/**
+	 * @brief Gets the smoothed mean squared particle speed of the last frame.
+	 *
+	 * Used by the water shader to attenuate the micro-waves: near zero means
+	 * the fluid is settled, values around 0.5 restore the full wave detail.
+	 */
+	float waterEnergy() const { return m_waterEnergy; }
+
+	/**
 	 * @brief Validates the spatial hash with a synchronous CPU readback.
 	 *
 	 * Reads back cellCount / cellStart / cellCursor / sortedIdx / cellIds /
@@ -255,7 +263,8 @@ private:
 		BINDING_CELL_CURSOR = 8,  ///< CellCursorBuffer: uint[] scatter write cursors.
 		BINDING_BLOCK_SUMS	= 9,  ///< BlockSumsBuffer: uint[] scan segment totals/offsets.
 		BINDING_XSPH_VEL =
-			10	///< XsphVelBuffer: vec4[] XSPH velocity delta (applied when integrating).
+			10,	///< XsphVelBuffer: vec4[] XSPH velocity delta (applied when integrating).
+		BINDING_ENERGY = 11	///< EnergyBuffer: uint[1] fixed-point sum of squared speeds.
 	};
 
 	/** @brief Creates and allocates all SSBOs for the current capacity/grid. */
@@ -318,6 +327,7 @@ private:
 	GLuint m_cellCursorSSBO = 0;  ///< uint[] scatter cursors (binding 8).
 	GLuint m_blockSumsSSBO	= 0;  ///< uint[] scan block sums (binding 9).
 	GLuint m_xsphVelSSBO	= 0;  ///< vec4[] XSPH velocity delta (binding 10).
+	GLuint m_energySSBO		= 0;  ///< uint[1] fixed-point kinetic-energy accumulator (binding 11).
 	GLuint m_rainVAO		= 0;  ///< VAO mapping the particle SSBO to point attributes.
 
 	Shader m_clearPredictShader;  ///< sph_clear_predict.comp.
@@ -334,5 +344,6 @@ private:
 	size_t m_maxParticles	= 0;		///< Capacity of the per-particle SSBOs.
 	size_t m_particleCount	= 0;		///< Valid particles in the SSBOs.
 	unsigned m_recycleSeed = 0;	///< Seed of the respawn RNG, advanced every substep.
+	float  m_waterEnergy	= 0.f;	///< Smoothed mean squared particle speed of the last frame.
 	bool   m_initialized	= false;	///< Flag indicating if the pipeline is ready.
 };

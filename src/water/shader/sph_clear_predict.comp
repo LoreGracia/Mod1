@@ -46,6 +46,18 @@ layout(std430, binding = 3) buffer PosPredBuffer {
     vec4 predicted[]; ///< xyz = predicted position at the end of the substep, w = unused.
 };
 
+/**
+ * @brief Single-element accumulator of the substep kinetic energy.
+ *
+ * Stored as a fixed-point unsigned integer because floating-point atomics
+ * require extensions. The integration pass adds speed^2 * kEnergyScale per
+ * particle and the CPU divides by (particleCount * kEnergyScale) to recover
+ * the mean squared speed.
+ */
+layout(std430, binding = 11) buffer EnergyBuffer {
+    uint energyAccum[]; ///< [0] = accumulated sum of squared speeds.
+};
+
 // ─── Uniforms ────────────────────────────────────────────────────────
 uniform int   uParticleCount; ///< Number of valid particles (not the SSBO capacity).
 uniform float uDt;            ///< Substep delta time in seconds.
@@ -61,6 +73,11 @@ uniform float uGravity;       ///< Gravity acceleration along the Y axis.
 void main() {
     uint i = gl_GlobalInvocationID.x;
     if (i >= uint(uParticleCount)) return;
+
+    // Single invocation clears the kinetic-energy accumulator for the
+    // integration pass of this substep (a barrier follows this dispatch).
+    if (i == 0u)
+        energyAccum[0] = 0u;
 
     vec3 pos = particles[i].posWeight.xyz;
     vec3 vel = particles[i].velAge.xyz;

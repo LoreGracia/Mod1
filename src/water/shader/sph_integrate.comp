@@ -61,6 +61,17 @@ layout(std430, binding = 10) buffer XsphVelBuffer {
     vec4 xsphVel[]; ///< xyz = XSPH velocity delta (computed by sph_forces.comp).
 };
 
+/**
+ * @brief Single-element accumulator of the substep kinetic energy.
+ *
+ * Fixed-point integer accumulation (speed^2 scaled by kEnergyScale) because
+ * floating-point atomics require extensions. Reset by sph_clear_predict.comp
+ * at the start of every substep and read back once per frame by the CPU.
+ */
+layout(std430, binding = 11) buffer EnergyBuffer {
+    uint energyAccum[]; ///< [0] = accumulated sum of squared speeds.
+};
+
 // ─── Uniforms ────────────────────────────────────────────────────────
 uniform int   uParticleCount;   ///< Number of valid particles (not the SSBO capacity).
 uniform float uDt;              ///< Substep delta time in seconds.
@@ -116,6 +127,10 @@ void main() {
     float speed = length(vel);
     if (speed > uMaxSpeed)
         vel = (vel / speed) * uMaxSpeed;
+
+    // Accumulate kinetic energy (squared speed) as scaled fixed-point.
+    const float kEnergyScale = 2000.0;
+    atomicAdd(energyAccum[0], uint(min(dot(vel, vel), 50.0) * kEnergyScale));
 
     // 2. Position update and age advance.
     pos += vel * uDt;

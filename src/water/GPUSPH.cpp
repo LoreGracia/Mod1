@@ -13,6 +13,7 @@
 
 #include <GPUSPH.hpp>
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <numeric>
 #include <vector>
@@ -208,6 +209,9 @@ void GPUSPH::createBuffers()
 	// ── XSPH velocity delta (applied by the integration pass) ────────
 	createSSBO(m_xsphVelSSBO, vec4Bytes);  // binding 10: vec4[] XSPH delta
 
+	// ── Kinetic-energy accumulator (one fixed-point scalar) ──────────
+	createSSBO(m_energySSBO, static_cast<GLsizeiptr>(sizeof(GLuint)));	// binding 11
+
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 
@@ -275,6 +279,7 @@ void GPUSPH::buildSpatialHash(float subDt)
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_PARTICLES, m_particleSSBO);
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_FORCES, m_forceSSBO);
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_POS_PRED, m_posPredSSBO);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_ENERGY, m_energySSBO);
 
 	m_clearPredictShader.use();
 	m_clearPredictShader.setInt("uParticleCount", static_cast<int>(m_particleCount));
@@ -413,6 +418,7 @@ void GPUSPH::integrateParticles(float subDt)
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_PARTICLES, m_particleSSBO);
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_FORCES, m_forceSSBO);
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_XSPH_VEL, m_xsphVelSSBO);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, BINDING_ENERGY, m_energySSBO);
 
 	m_integrateShader.use();
 	m_integrateShader.setInt("uParticleCount", static_cast<int>(m_particleCount));
@@ -457,6 +463,21 @@ void GPUSPH::update(float dt)
 		// Advance the respawn RNG seed: every substep draws a fresh stream.
 		++m_recycleSeed;
 	}
+
+	// Read back the fixed-point energy accumulator of the last substep and
+	// convert it to the mean squared particle speed. The exponential smoothing
+	// removes the substep-to-substep jitter before the shader consumes it.
+	constexpr float kEnergyScale = 2000.0f;
+	GLuint			rawEnergy	 = 0;
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_energySSBO);
+	glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(GLuint), &rawEnergy);
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+	const float meanSquaredSpeed =
+		static_cast<float>(rawEnergy) /
+		(kEnergyScale * static_cast<float>(m_particleCount));
+	const float smoothing = 1.0f - std::exp(-dt * 8.0f);
+	m_waterEnergy += (meanSquaredSpeed - m_waterEnergy) * smoothing;
 }
 
 /**
@@ -721,7 +742,7 @@ void GPUSPH::release()
 {
 	const GLuint ssbos[] = {m_particleSSBO,	  m_densPressSSBO, m_forceSSBO,		m_posPredSSBO,
 							m_cellIdSSBO,	  m_sortedIdxSSBO, m_cellCountSSBO, m_cellStartSSBO,
-							m_cellCursorSSBO, m_blockSumsSSBO, m_xsphVelSSBO};
+							m_cellCursorSSBO, m_blockSumsSSBO, m_xsphVelSSBO,	m_energySSBO};
 	glDeleteBuffers(sizeof(ssbos) / sizeof(ssbos[0]), ssbos);
 
 	if (m_rainVAO) {
@@ -740,7 +761,9 @@ void GPUSPH::release()
 	m_cellCursorSSBO = 0;
 	m_blockSumsSSBO	 = 0;
 	m_xsphVelSSBO	 = 0;
+	m_energySSBO	 = 0;
 
+	m_waterEnergy	 = 0.f;
 	m_initialized	= false;
 	m_particleCount = 0;
 }
