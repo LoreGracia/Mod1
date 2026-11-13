@@ -19,7 +19,7 @@ public:
 	bool loadFromFile(const std::string& vertPath, const std::string& fragPath);
 	// ── Compute Shaders ─────────────────────────────────────────────
 	bool loadComputeFromSource(const std::string& computeSrc);
-	bool loadComputeFromFile  (const std::string& computePath);
+	bool loadComputeFromFile(const std::string& computePath);
 
 	// Lanza el compute. Internamente hace glUseProgram + glDispatchCompute.
 	// Después DEBES llamar a glMemoryBarrier(...) tú mismo, indicando
@@ -28,9 +28,9 @@ public:
 
 	// Helper: dispatch suficiente para cubrir una rejilla (gridX, gridY, gridZ)
 	// asumiendo un local_size = (localX, localY, localZ) declarado en el .comp.
-	void dispatchForGrid(GLuint gridX, GLuint gridY, GLuint gridZ,
-                     GLuint localX = 4, GLuint localY = 4, GLuint localZ = 4) const;
-	
+	void dispatchForGrid(GLuint gridX, GLuint gridY, GLuint gridZ, GLuint localX = 4,
+						 GLuint localY = 4, GLuint localZ = 4) const;
+
 	void   use() const { glUseProgram(m_program); }
 	GLuint id() const { return m_program; }
 
@@ -39,7 +39,7 @@ public:
 	void setVec3(const char* name, const glm::vec3& v) const;
 	void setVec4(const char* name, const glm::vec4& v) const;
 	void setMat4(const char* name, const glm::mat4& m) const;
-	
+
 	void setIVec3(const char* name, const glm::ivec3& v) const;
 
 private:

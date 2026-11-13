@@ -29,8 +29,14 @@ class Terrain
             float rotY = 0.f;
             float rotX = 0.f;
             float size = 2;
+
             std::vector<glm::vec3> points;
-            
+            std::vector<uint32_t>  indices;
+			std::vector<glm::vec3> vertices;
+            std::vector<float> normals;
+
+
+            void getNormals();
             void generateTerrain();
             void parse(const std::string& mapPath);
 
