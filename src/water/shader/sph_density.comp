@@ -1,70 +1,70 @@
 #version 430 core
 
 /**
- * @file sph_density.comp
- * @brief Computes the SPH density (Poly6 kernel) and pressure (equation of
- * state) per particle, using the spatial hash for the neighbor search.
- *
- * Executed right after sph_hash.comp. One invocation per particle:
- *   1. Recomputes the particle's grid cell (same clamped mapping used to
- *      build the hash) and sweeps the 27 surrounding cells.
- *   2. Iterates the contiguous range of each cell
- *      [cellStart[c], cellStart[c] + cellCount[c]) in SortedIndexBuffer,
- *      without any map lookup.
- *   3. Accumulates the density with the Poly6 kernel over the neighbors,
- *      measuring distances between PREDICTED positions: the hash grid is
- *      built from the predicted configuration, so the candidate set and
- *      the kernel evaluation use the same geometry (consistency).
- *   4. Derives the pressure with the same equation of state as the CPU
- *      solver (stiffness * (density - restDensity)), including the density
- *      floor for isolated particles and the tensile-instability clamp, and
- *      evaluates the settled/airborne classification for the splat weight.
- *
- * The Spiky kernel is intentionally NOT evaluated here: its gradient turns
- * the pressure of a PAIR of particles into a force, so it belongs to the
- * forces pass (sph_forces.comp), which consumes this pass's output.
- *
- * Output: DensPressBuffer[i] = (density, pressure, splatWeight, 0).
- */
+* @file sph_density.comp
+* @brief Computes the SPH density (Poly6 kernel) and pressure (equation of
+* state) per particle, using the spatial hash for the neighbor search.
+*
+* Executed right after sph_hash.comp. One invocation per particle:
+*   1. Recomputes the particle's grid cell (same clamped mapping used to
+*      build the hash) and sweeps the 27 surrounding cells.
+*   2. Iterates the contiguous range of each cell
+*      [cellStart[c], cellStart[c] + cellCount[c]) in SortedIndexBuffer,
+*      without any map lookup.
+*   3. Accumulates the density with the Poly6 kernel over the neighbors,
+*      measuring distances between PREDICTED positions: the hash grid is
+*      built from the predicted configuration, so the candidate set and
+*      the kernel evaluation use the same geometry (consistency).
+*   4. Derives the pressure with the same equation of state as the CPU
+*      solver (stiffness * (density - restDensity)), including the density
+*      floor for isolated particles and the tensile-instability clamp, and
+*      evaluates the settled/airborne classification for the splat weight.
+*
+* The Spiky kernel is intentionally NOT evaluated here: its gradient turns
+* the pressure of a PAIR of particles into a force, so it belongs to the
+* forces pass (sph_forces.comp), which consumes this pass's output.
+*
+* Output: DensPressBuffer[i] = (density, pressure, splatWeight, 0).
+*/
 
 layout(local_size_x = 64) in;
 
 // ─── SSBOs (bindings must match GPUSPH.cpp) ──────────────────────────
 /**
- * @struct GPUParticle
- * @brief GPU representation of a particle, occupying 48 bytes (3 vec4s).
- * Identical to the struct in density_splat.comp, so the same SSBO can be
- * handed to the Marching Cubes splat pass without any copy or conversion
- * (zero-copy handoff).
- */
+* @struct GPUParticle
+* @brief GPU representation of a particle, occupying 48 bytes (3 vec4s).
+* Identical to the struct in density_splat.comp, so the same SSBO can be
+* handed to the Marching Cubes splat pass without any copy or conversion
+* (zero-copy handoff).
+*/
 struct GPUParticle {
-    vec4 posWeight; ///< xyz = position, w = splatWeight (0 = airborne drop, 1 = settled water).
-    vec4 velAge;    ///< xyz = velocity, w = age.
-    vec4 flags;     ///< x = rainDrop flag (1 = rain drop, recycled at the ground), y,z,w = unused.
+	vec4 posWeight; ///< xyz = position, w = splatWeight (0 = airborne drop, 1 = settled water).
+	vec4 velAge;    ///< xyz = velocity, w = age.
+	vec4 flags;     ///< x = rainDrop flag (1 = rain drop, recycled at the ground), y,z,w = unused.
 };
 
 layout(std430, binding = 0) buffer ParticleBuffer {
-    GPUParticle particles[]; ///< Current state (read here only for the classification).
+	GPUParticle particles[]; ///< Current state (read here only for the classification).
 };
 
 layout(std430, binding = 1) buffer DensPressBuffer {
-    vec4 densPress[]; ///< x = density, y = pressure, z = splatWeight, w = unused.
+	vec4 densPress[]; ///< x = density, y = pressure, z = splatWeight, w = unused.
 };
 
 layout(std430, binding = 3) buffer PosPredBuffer {
-    vec4 predicted[]; ///< xyz = predicted position (written by sph_clear_predict.comp).
+	vec4 predicted[]; ///< xyz = predicted position (written by sph_clear_predict.comp).
 };
 
 layout(std430, binding = 5) buffer SortedIndexBuffer {
-    uint sortedIdx[]; ///< Particle indices grouped by cell (written by sph_hash.comp).
+	uint sortedIdx[]; ///< Particle indices grouped by cell (written by sph_hash.comp).
 };
 
 layout(std430, binding = 6) buffer CellCountBuffer {
-    uint cellCount[]; ///< Number of particles per cell.
+	uint cellCount[]; ///< Number of particles per cell.
 };
 
 layout(std430, binding = 7) buffer CellStartBuffer {
-    uint cellStart[]; ///< Start of the contiguous range of each cell.
+	uint cellStart[]; ///< Start of the contiguous range of each cell.
 };
 
 // ─── Uniforms ────────────────────────────────────────────────────────
@@ -83,85 +83,85 @@ uniform float uCellSize;      ///< Grid cell edge (>= uH after scan-limit clampi
 const float PI = 3.14159265359; ///< Pi, used by the Poly6 normalization.
 
 /**
- * @brief Poly6 smoothing kernel W(r) for density evaluation.
- * W(r) = 315 / (64 * pi * h^9) * (h^2 - r^2)^3 for r^2 < h^2, 0 otherwise.
- * @param r2 Squared distance between the two particles.
- * @param h2 Squared smoothing radius.
- * @param kPoly6 Precomputed normalization 315 / (64 * pi * h^9).
- * @return The kernel value.
- */
+* @brief Poly6 smoothing kernel W(r) for density evaluation.
+* W(r) = 315 / (64 * pi * h^9) * (h^2 - r^2)^3 for r^2 < h^2, 0 otherwise.
+* @param r2 Squared distance between the two particles.
+* @param h2 Squared smoothing radius.
+* @param kPoly6 Precomputed normalization 315 / (64 * pi * h^9).
+* @return The kernel value.
+*/
 float kernelPoly6(float r2, float h2, float kPoly6) {
-    if (r2 >= h2)
-        return 0.0;
-    float diff = h2 - r2;
-    return kPoly6 * diff * diff * diff;
+	if (r2 >= h2)
+		return 0.0;
+	float diff = h2 - r2;
+	return kPoly6 * diff * diff * diff;
 }
 
 /**
- * @brief Accumulates the density and derives pressure and splatWeight.
- *
- * Mirrors the CPU solver exactly: the self-contribution is excluded, the
- * raw density is floored at 10% of the rest density (isolated particles)
- * and the pressure is clamped from below at -0.2% of the stiffness (weak
- * cohesion floor that prevents the tensile instability).
- */
+* @brief Accumulates the density and derives pressure and splatWeight.
+*
+* Mirrors the CPU solver exactly: the self-contribution is excluded, the
+* raw density is floored at 10% of the rest density (isolated particles)
+* and the pressure is clamped from below at -0.2% of the stiffness (weak
+* cohesion floor that prevents the tensile instability).
+*/
 void main() {
-    uint i = gl_GlobalInvocationID.x;
-    if (i >= uint(uParticleCount)) return;
+	uint i = gl_GlobalInvocationID.x;
+	if (i >= uint(uParticleCount)) return;
 
-    const float h2     = uH * uH;
-    const float kPoly6 = 315.0 / (64.0 * PI * pow(uH, 9.0));
+	const float h2     = uH * uH;
+	const float kPoly6 = 315.0 / (64.0 * PI * pow(uH, 9.0));
 
-    // Kernel distances use the predicted positions: the same configuration
-    // the hash grid was built from.
-    vec3 pi = predicted[i].xyz;
+	// Kernel distances use the predicted positions: the same configuration
+	// the hash grid was built from.
+	vec3 pi = predicted[i].xyz;
 
-    // Cell of the particle: same clamped mapping used in sph_hash.comp.
-    ivec3 base = clamp(ivec3(floor((pi - uGridMin) / uCellSize)), ivec3(0), uGridSize - ivec3(1));
+	// Cell of the particle: same clamped mapping used in sph_hash.comp.
+	ivec3 base = clamp(ivec3(floor((pi - uGridMin) / uCellSize)), ivec3(0), uGridSize - ivec3(1));
 
-    // Density accumulation over the 27 surrounding cells. Since the cell
-    // edge is >= the smoothing radius, every neighbor within the kernel
-    // support lies inside this block.
-    float density = 0.0;
-    for (int dz = -1; dz <= 1; ++dz) {
-        for (int dy = -1; dy <= 1; ++dy) {
-            for (int dx = -1; dx <= 1; ++dx) {
-                ivec3 c = base + ivec3(dx, dy, dz);
-                if (any(lessThan(c, ivec3(0))) || any(greaterThanEqual(c, uGridSize)))
-                    continue;
+	// Density accumulation over the 27 surrounding cells. Since the cell
+	// edge is >= the smoothing radius, every neighbor within the kernel
+	// support lies inside this block.
+	float density = 0.0;
+	for (int dz = -1; dz <= 1; ++dz) {
+		for (int dy = -1; dy <= 1; ++dy) {
+			for (int dx = -1; dx <= 1; ++dx) {
+				ivec3 c = base + ivec3(dx, dy, dz);
+				if (any(lessThan(c, ivec3(0))) || any(greaterThanEqual(c, uGridSize)))
+					continue;
 
-                uint cell  = uint(c.x + uGridSize.x * (c.y + uGridSize.y * c.z));
-                uint start = cellStart[cell];
-                uint count = cellCount[cell];
-                for (uint k = 0u; k < count; ++k) {
-                    uint j = sortedIdx[start + k];
-                    if (j == i) // exclude the self-contribution (CPU solver parity)
-                        continue;
-                    vec3 d = pi - predicted[j].xyz;
-                    density += uMass * kernelPoly6(dot(d, d), h2, kPoly6);
-                }
-            }
-        }
-    }
+				uint cell  = uint(c.x + uGridSize.x * (c.y + uGridSize.y * c.z));
+				uint start = cellStart[cell];
+				uint count = cellCount[cell];
+				for (uint k = 0u; k < count; ++k) {
+					uint j = sortedIdx[start + k];
+					if (j == i) // exclude the self-contribution (CPU solver parity)
+						continue;
+					vec3 d = pi - predicted[j].xyz;
+					density += uMass * kernelPoly6(dot(d, d), h2, kPoly6);
+				}
+			}
+		}
+	}
 
-    // Density floor for isolated particles.
-    density = max(density, 0.1 * uRestDensity);
+	// Density floor for isolated particles.
+	density = max(density, 0.1 * uRestDensity);
 
-    // Equation of state + cohesion clamp (tensile-instability guard).
-    float pressure = uStiffness * (density - uRestDensity);
-    pressure = max(pressure, -0.002 * uStiffness);
+	// Equation of state + cohesion clamp (tensile-instability guard).
+	float pressure = uStiffness * (density - uRestDensity);
+	pressure = max(pressure, -0.002 * uStiffness);
 
-    // Settled vs. airborne classification for the hybrid rendering, gated
-    // by the rain mode and evaluated on the CURRENT state like the CPU
-    // solver: speed above the settle threshold or inside the upper air
-    // band marks the particle as airborne.
-    float splatWeight = 1.0;
-    if (uRainMode != 0) {
-        vec3 pos = particles[i].posWeight.xyz;
-        vec3 vel = particles[i].velAge.xyz;
-        if (length(vel) > uSettleSpeed || pos.y > uAirY)
-            splatWeight = 0.0;
-    }
+	// Settled vs. airborne classification for the hybrid rendering, gated
+	// by the rain mode and evaluated on the CURRENT state like the CPU
+	// solver: speed above the settle threshold or inside the upper air
+	// band marks the particle as airborne.
+	float splatWeight = 1.0;
+	if (uRainMode != 0) {
+		vec3 pos = particles[i].posWeight.xyz;
+		vec3 vel = particles[i].velAge.xyz;
+		if (length(vel) > uSettleSpeed || pos.y > uAirY)
+			splatWeight = 0.0;
+	}
 
-    densPress[i] = vec4(density, pressure, splatWeight, 0.0);
+	densPress[i] = vec4(density, pressure, splatWeight, 0.0);
 }

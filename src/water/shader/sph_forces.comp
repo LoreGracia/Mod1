@@ -1,95 +1,95 @@
 #version 430 core
 
 /**
- * @file sph_forces.comp
- * @brief Computes the SPH pressure and viscosity forces plus the XSPH
- * velocity-smoothing delta per particle, using the spatial hash for the
- * neighbor search.
- *
- * Executed right after sph_density.comp. One invocation per particle sweeps
- * the 27 cells around its own cell and, in a single fused neighbor loop,
- * accumulates:
- *   1. Pressure force: Spiky kernel gradient driven by the equation-of-state
- *      pressures of both particles of each pair.
- *   2. Viscosity force: Laplacian kernel driven by the velocity difference.
- *   3. XSPH: normalized Poly6 velocity correction.
- *
- * Kernel distances are measured between PREDICTED positions (the same
- * configuration the hash grid and the density pass use), while velocities
- * are the CURRENT ones, exactly like the CPU solver.
- *
- * ForceBuffer is updated with a read-modify-write of the invocation's own
- * entry (gravity was injected by sph_clear_predict.comp): every index has
- * exactly one writer, so no atomics are needed.
- *
- * XSPH is a VELOCITY delta, not a force, and it may only be applied AFTER
- * every particle has read its neighbors' velocities: writing it straight
- * into ParticleBuffer would race against the neighbor reads of this very
- * pass. The delta is therefore stored in XsphVelBuffer, already scaled by
- * the XSPH factor and normalized by the kernel weight sum, and the
- * integration pass adds it to the velocity. This is the Jacobi (parallel)
- * formulation: every delta is computed from the same pre-update velocity
- * snapshot, which is deterministic, unlike the order-dependent sequential
- * application of the CPU loop.
- *
- * Guards mirror the CPU solver exactly:
- *   - pressure + viscosity skip pairs with r >= h or r < 1e-6 (the
- *     coincident-pair guard avoids the division by zero in d / r);
- *   - XSPH keeps coincident pairs (W(0) is finite and there is no division
- *     by r).
- *
- * Output:
- *   ForceBuffer[i].xyz   = gravity + fPress + fVisc (w = 0).
- *   XsphVelBuffer[i].xyz = uXsph * (sum of dv * W) / (sum of W), or 0 when
- *                          the weight sum is negligible (isolated particle).
- */
+* @file sph_forces.comp
+* @brief Computes the SPH pressure and viscosity forces plus the XSPH
+* velocity-smoothing delta per particle, using the spatial hash for the
+* neighbor search.
+*
+* Executed right after sph_density.comp. One invocation per particle sweeps
+* the 27 cells around its own cell and, in a single fused neighbor loop,
+* accumulates:
+*   1. Pressure force: Spiky kernel gradient driven by the equation-of-state
+*      pressures of both particles of each pair.
+*   2. Viscosity force: Laplacian kernel driven by the velocity difference.
+*   3. XSPH: normalized Poly6 velocity correction.
+*
+* Kernel distances are measured between PREDICTED positions (the same
+* configuration the hash grid and the density pass use), while velocities
+* are the CURRENT ones, exactly like the CPU solver.
+*
+* ForceBuffer is updated with a read-modify-write of the invocation's own
+* entry (gravity was injected by sph_clear_predict.comp): every index has
+* exactly one writer, so no atomics are needed.
+*
+* XSPH is a VELOCITY delta, not a force, and it may only be applied AFTER
+* every particle has read its neighbors' velocities: writing it straight
+* into ParticleBuffer would race against the neighbor reads of this very
+* pass. The delta is therefore stored in XsphVelBuffer, already scaled by
+* the XSPH factor and normalized by the kernel weight sum, and the
+* integration pass adds it to the velocity. This is the Jacobi (parallel)
+* formulation: every delta is computed from the same pre-update velocity
+* snapshot, which is deterministic, unlike the order-dependent sequential
+* application of the CPU loop.
+*
+* Guards mirror the CPU solver exactly:
+*   - pressure + viscosity skip pairs with r >= h or r < 1e-6 (the
+*     coincident-pair guard avoids the division by zero in d / r);
+*   - XSPH keeps coincident pairs (W(0) is finite and there is no division
+*     by r).
+*
+* Output:
+*   ForceBuffer[i].xyz   = gravity + fPress + fVisc (w = 0).
+*   XsphVelBuffer[i].xyz = uXsph * (sum of dv * W) / (sum of W), or 0 when
+*                          the weight sum is negligible (isolated particle).
+*/
 
 layout(local_size_x = 64) in;
 
 // ─── SSBOs (bindings must match GPUSPH.cpp) ──────────────────────────
 /**
- * @struct GPUParticle
- * @brief GPU representation of a particle, occupying 48 bytes (3 vec4s).
- * Identical to the struct in density_splat.comp, so the same SSBO can be
- * handed to the Marching Cubes splat pass without any copy or conversion
- * (zero-copy handoff).
- */
+* @struct GPUParticle
+* @brief GPU representation of a particle, occupying 48 bytes (3 vec4s).
+* Identical to the struct in density_splat.comp, so the same SSBO can be
+* handed to the Marching Cubes splat pass without any copy or conversion
+* (zero-copy handoff).
+*/
 struct GPUParticle {
-    vec4 posWeight; ///< xyz = position, w = splatWeight (0 = airborne drop, 1 = settled water).
-    vec4 velAge;    ///< xyz = velocity, w = age.
-    vec4 flags;     ///< x = rainDrop flag (1 = rain drop, recycled at the ground), y,z,w = unused.
+	vec4 posWeight; ///< xyz = position, w = splatWeight (0 = airborne drop, 1 = settled water).
+	vec4 velAge;    ///< xyz = velocity, w = age.
+	vec4 flags;     ///< x = rainDrop flag (1 = rain drop, recycled at the ground), y,z,w = unused.
 };
 
 layout(std430, binding = 0) buffer ParticleBuffer {
-    GPUParticle particles[]; ///< Current velocities (read-only in this pass).
+	GPUParticle particles[]; ///< Current velocities (read-only in this pass).
 };
 
 layout(std430, binding = 1) buffer DensPressBuffer {
-    vec4 densPress[]; ///< x = density, y = pressure (written by sph_density.comp).
+	vec4 densPress[]; ///< x = density, y = pressure (written by sph_density.comp).
 };
 
 layout(std430, binding = 2) buffer ForceBuffer {
-    vec4 forces[]; ///< xyz = force (acceleration): gravity + pressure + viscosity.
+	vec4 forces[]; ///< xyz = force (acceleration): gravity + pressure + viscosity.
 };
 
 layout(std430, binding = 3) buffer PosPredBuffer {
-    vec4 predicted[]; ///< xyz = predicted position (written by sph_clear_predict.comp).
+	vec4 predicted[]; ///< xyz = predicted position (written by sph_clear_predict.comp).
 };
 
 layout(std430, binding = 5) buffer SortedIndexBuffer {
-    uint sortedIdx[]; ///< Particle indices grouped by cell (written by sph_hash.comp).
+	uint sortedIdx[]; ///< Particle indices grouped by cell (written by sph_hash.comp).
 };
 
 layout(std430, binding = 6) buffer CellCountBuffer {
-    uint cellCount[]; ///< Number of particles per cell.
+	uint cellCount[]; ///< Number of particles per cell.
 };
 
 layout(std430, binding = 7) buffer CellStartBuffer {
-    uint cellStart[]; ///< Start of the contiguous range of each cell.
+	uint cellStart[]; ///< Start of the contiguous range of each cell.
 };
 
 layout(std430, binding = 10) buffer XsphVelBuffer {
-    vec4 xsphVel[]; ///< xyz = XSPH velocity delta, to be applied when integrating.
+	vec4 xsphVel[]; ///< xyz = XSPH velocity delta, to be applied when integrating.
 };
 
 // ─── Uniforms ────────────────────────────────────────────────────────
@@ -104,126 +104,126 @@ uniform float uCellSize;      ///< Grid cell edge (>= uH after scan-limit clampi
 const float PI = 3.14159265359; ///< Pi, used by the kernel normalizations.
 
 /**
- * @brief Poly6 smoothing kernel W(r), used by the XSPH weights.
- * W(r) = 315 / (64 * pi * h^9) * (h^2 - r^2)^3 for r^2 < h^2, 0 otherwise.
- * @param r2 Squared distance between the two particles.
- * @param h2 Squared smoothing radius.
- * @param kPoly6 Precomputed normalization 315 / (64 * pi * h^9).
- * @return The kernel value.
- */
+* @brief Poly6 smoothing kernel W(r), used by the XSPH weights.
+* W(r) = 315 / (64 * pi * h^9) * (h^2 - r^2)^3 for r^2 < h^2, 0 otherwise.
+* @param r2 Squared distance between the two particles.
+* @param h2 Squared smoothing radius.
+* @param kPoly6 Precomputed normalization 315 / (64 * pi * h^9).
+* @return The kernel value.
+*/
 float kernelPoly6(float r2, float h2, float kPoly6) {
-    if (r2 >= h2)
-        return 0.0;
-    float diff = h2 - r2;
-    return kPoly6 * diff * diff * diff;
+	if (r2 >= h2)
+		return 0.0;
+	float diff = h2 - r2;
+	return kPoly6 * diff * diff * diff;
 }
 
 /**
- * @brief Spiky kernel gradient magnitude for the pressure force.
- * F(r) = -45 / (pi * h^6) * (h - r)^2 for 1e-6 <= r < h, 0 otherwise.
- * @param r Distance between the two particles.
- * @param h Smoothing radius.
- * @param kSpiky Precomputed normalization -45 / (pi * h^6).
- * @return The gradient magnitude.
- */
+* @brief Spiky kernel gradient magnitude for the pressure force.
+* F(r) = -45 / (pi * h^6) * (h - r)^2 for 1e-6 <= r < h, 0 otherwise.
+* @param r Distance between the two particles.
+* @param h Smoothing radius.
+* @param kSpiky Precomputed normalization -45 / (pi * h^6).
+* @return The gradient magnitude.
+*/
 float kernelSpikyGrad(float r, float h, float kSpiky) {
-    if (r >= h || r < 1e-6)
-        return 0.0;
-    float diff = h - r;
-    return kSpiky * diff * diff;
+	if (r >= h || r < 1e-6)
+		return 0.0;
+	float diff = h - r;
+	return kSpiky * diff * diff;
 }
 
 /**
- * @brief Laplacian kernel for the viscosity force.
- * Laplacian W(r) = 45 / (pi * h^6) * (h - r) for r < h, 0 otherwise.
- * @param r Distance between the two particles.
- * @param h Smoothing radius.
- * @param kLaplacian Precomputed normalization 45 / (pi * h^6).
- * @return The Laplacian value.
- */
+* @brief Laplacian kernel for the viscosity force.
+* Laplacian W(r) = 45 / (pi * h^6) * (h - r) for r < h, 0 otherwise.
+* @param r Distance between the two particles.
+* @param h Smoothing radius.
+* @param kLaplacian Precomputed normalization 45 / (pi * h^6).
+* @return The Laplacian value.
+*/
 float kernelLaplacian(float r, float h, float kLaplacian) {
-    if (r >= h)
-        return 0.0;
-    return kLaplacian * (h - r);
+	if (r >= h)
+		return 0.0;
+	return kLaplacian * (h - r);
 }
 
 /**
- * @brief Accumulates pressure + viscosity forces and the XSPH delta.
- *
- * Mirrors the CPU solver term by term: the pressure term uses the pair
- * pressures over the product of densities, the viscosity term uses the
- * velocity difference over the neighbor's density, and XSPH normalizes the
- * weighted velocity difference by the total Poly6 weight.
- */
+* @brief Accumulates pressure + viscosity forces and the XSPH delta.
+*
+* Mirrors the CPU solver term by term: the pressure term uses the pair
+* pressures over the product of densities, the viscosity term uses the
+* velocity difference over the neighbor's density, and XSPH normalizes the
+* weighted velocity difference by the total Poly6 weight.
+*/
 void main() {
-    uint i = gl_GlobalInvocationID.x;
-    if (i >= uint(uParticleCount)) return;
+	uint i = gl_GlobalInvocationID.x;
+	if (i >= uint(uParticleCount)) return;
 
-    const float h  = uH;
-    const float h2 = h * h;
-    const float kPoly6    = 315.0 / (64.0 * PI * pow(h, 9.0));
-    const float kSpiky    = -45.0 / (PI * pow(h, 6.0));
-    const float kLaplacian = 45.0 / (PI * pow(h, 6.0));
+	const float h  = uH;
+	const float h2 = h * h;
+	const float kPoly6    = 315.0 / (64.0 * PI * pow(h, 9.0));
+	const float kSpiky    = -45.0 / (PI * pow(h, 6.0));
+	const float kLaplacian = 45.0 / (PI * pow(h, 6.0));
 
-    vec3  pi     = predicted[i].xyz;
-    vec3  vi     = particles[i].velAge.xyz;
-    float rhoI   = densPress[i].x;
-    float pressI = densPress[i].y;
+	vec3  pi     = predicted[i].xyz;
+	vec3  vi     = particles[i].velAge.xyz;
+	float rhoI   = densPress[i].x;
+	float pressI = densPress[i].y;
 
-    // Cell of the particle: same clamped mapping used in sph_hash.comp.
-    ivec3 base = clamp(ivec3(floor((pi - uGridMin) / uCellSize)), ivec3(0), uGridSize - ivec3(1));
+	// Cell of the particle: same clamped mapping used in sph_hash.comp.
+	ivec3 base = clamp(ivec3(floor((pi - uGridMin) / uCellSize)), ivec3(0), uGridSize - ivec3(1));
 
-    vec3  fPress = vec3(0.0);
-    vec3  fVisc  = vec3(0.0);
-    vec3  dv     = vec3(0.0);
-    float wsum   = 0.0;
+	vec3  fPress = vec3(0.0);
+	vec3  fVisc  = vec3(0.0);
+	vec3  dv     = vec3(0.0);
+	float wsum   = 0.0;
 
-    // Fused neighbor sweep over the 27 surrounding cells.
-    for (int dz = -1; dz <= 1; ++dz) {
-        for (int dy = -1; dy <= 1; ++dy) {
-            for (int dx = -1; dx <= 1; ++dx) {
-                ivec3 c = base + ivec3(dx, dy, dz);
-                if (any(lessThan(c, ivec3(0))) || any(greaterThanEqual(c, uGridSize)))
-                    continue;
+	// Fused neighbor sweep over the 27 surrounding cells.
+	for (int dz = -1; dz <= 1; ++dz) {
+		for (int dy = -1; dy <= 1; ++dy) {
+			for (int dx = -1; dx <= 1; ++dx) {
+				ivec3 c = base + ivec3(dx, dy, dz);
+				if (any(lessThan(c, ivec3(0))) || any(greaterThanEqual(c, uGridSize)))
+					continue;
 
-                uint cellIndex = uint(c.x + uGridSize.x * (c.y + uGridSize.y * c.z));
-                uint start     = cellStart[cellIndex];
-                uint count     = cellCount[cellIndex];
-                for (uint k = start; k < start + count; ++k) {
-                    uint j = sortedIdx[k];
-                    if (j == i) // exclude the self-pair (CPU solver parity)
-                        continue;
+				uint cellIndex = uint(c.x + uGridSize.x * (c.y + uGridSize.y * c.z));
+				uint start     = cellStart[cellIndex];
+				uint count     = cellCount[cellIndex];
+				for (uint k = start; k < start + count; ++k) {
+					uint j = sortedIdx[k];
+					if (j == i) // exclude the self-pair (CPU solver parity)
+						continue;
 
-                    vec3  d  = pi - predicted[j].xyz;
-                    float r2 = dot(d, d);
-                    vec3  vj = particles[j].velAge.xyz;
+					vec3  d  = pi - predicted[j].xyz;
+					float r2 = dot(d, d);
+					vec3  vj = particles[j].velAge.xyz;
 
-                    // XSPH: Poly6 weight, coincident pairs included.
-                    if (r2 < h2) {
-                        float w = kernelPoly6(r2, h2, kPoly6);
-                        dv += (vj - vi) * w;
-                        wsum += w;
-                    }
+					// XSPH: Poly6 weight, coincident pairs included.
+					if (r2 < h2) {
+						float w = kernelPoly6(r2, h2, kPoly6);
+						dv += (vj - vi) * w;
+						wsum += w;
+					}
 
-                    // Pressure + viscosity: skip out-of-support and
-                    // coincident pairs (division by r below).
-                    float r = sqrt(r2);
-                    if (r < h && r >= 1e-6) {
-                        vec3  dir    = d / r;
-                        vec4  dpJ    = densPress[j];
-                        float pTerm  = (pressI + dpJ.y) / (rhoI * dpJ.x);
-                        fPress -= dir * (pTerm * kernelSpikyGrad(r, h, kSpiky));
-                        fVisc += (vj - vi) * (uViscosity * kernelLaplacian(r, h, kLaplacian) / dpJ.x);
-                    }
-                }
-            }
-        }
-    }
+					// Pressure + viscosity: skip out-of-support and
+					// coincident pairs (division by r below).
+					float r = sqrt(r2);
+					if (r < h && r >= 1e-6) {
+						vec3  dir    = d / r;
+						vec4  dpJ    = densPress[j];
+						float pTerm  = (pressI + dpJ.y) / (rhoI * dpJ.x);
+						fPress -= dir * (pTerm * kernelSpikyGrad(r, h, kSpiky));
+						fVisc += (vj - vi) * (uViscosity * kernelLaplacian(r, h, kLaplacian) / dpJ.x);
+					}
+				}
+			}
+		}
+	}
 
-    // Add the pair terms on top of the gravity injected by the clear pass.
-    forces[i] = vec4(forces[i].xyz + fPress + fVisc, 0.0);
+	// Add the pair terms on top of the gravity injected by the clear pass.
+	forces[i] = vec4(forces[i].xyz + fPress + fVisc, 0.0);
 
-    // XSPH delta, scaled and normalized; zero for isolated particles.
-    vec3 delta = (wsum > 1e-12) ? (uXsph * dv / wsum) : vec3(0.0);
-    xsphVel[i] = vec4(delta, 0.0);
+	// XSPH delta, scaled and normalized; zero for isolated particles.
+	vec3 delta = (wsum > 1e-12) ? (uXsph * dv / wsum) : vec3(0.0);
+	xsphVel[i] = vec4(delta, 0.0);
 }

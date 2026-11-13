@@ -292,6 +292,7 @@ void GPUMarchingCubes::generateMesh()
 	m_splatShader.setIVec3("uGridSize", m_gridSize);
 	m_splatShader.setFloat("uParticleRadius", m_particleRadius);
 	m_splatShader.setFloat("uDensityScale", m_densityScale);
+	m_splatShader.setFloat("uFillScale", m_fillScale);
 	m_splatShader.setFloat("uFallSpeedCutoff", m_fallSpeedCutoff);
 	m_splatShader.setFloat("uSplatHeight", m_splatHeight);
 	m_splatShader.setFloat("uSplatMaxHeight", m_splatMaxHeight);

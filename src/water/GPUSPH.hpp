@@ -341,6 +341,8 @@ private:
 	int		   m_numBlocks = 0;	   ///< Scan workgroups covering the grid (ceil(numCells/1024)).
 	float	   m_cellSize  = 0.f;  ///< Effective cell edge length (>= h, see rebuildGrid).
 
+	float fillLevel		  = 0.0f;
+
 	size_t m_maxParticles	= 0;		///< Capacity of the per-particle SSBOs.
 	size_t m_particleCount	= 0;		///< Valid particles in the SSBOs.
 	unsigned m_recycleSeed = 0;	///< Seed of the respawn RNG, advanced every substep.

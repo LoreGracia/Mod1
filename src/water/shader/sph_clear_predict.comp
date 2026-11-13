@@ -1,61 +1,61 @@
 #version 430 core
 
 /**
- * @file sph_clear_predict.comp
- * @brief Clears per-particle accumulators and computes predicted positions.
- *
- * Pass 1 of the GPU SPH pipeline. For each particle it:
- *   1. Resets the force accumulator to gravity (mirrors the CPU solver, where
- *      "force" is used directly as an acceleration, not mass * acceleration).
- *   2. Computes the predicted position at the end of the substep
- *      (pos + vel * dt + 0.5 * g * dt^2).
- *
- * The predicted position is the key to the correctness of the GPU spatial
- * hash: the grid is built from WHERE particles WILL BE at the end of the
- * substep, so the 27-cell neighbor sweep of the later passes covers both the
- * current and the final configuration. Note that the CPU solver hashed only
- * once per frame (Particles::buildHash), while the GPU pipeline re-hashes on
- * every substep, which is strictly more accurate.
- */
+* @file sph_clear_predict.comp
+* @brief Clears per-particle accumulators and computes predicted positions.
+*
+* Pass 1 of the GPU SPH pipeline. For each particle it:
+*   1. Resets the force accumulator to gravity (mirrors the CPU solver, where
+*      "force" is used directly as an acceleration, not mass * acceleration).
+*   2. Computes the predicted position at the end of the substep
+*      (pos + vel * dt + 0.5 * g * dt^2).
+*
+* The predicted position is the key to the correctness of the GPU spatial
+* hash: the grid is built from WHERE particles WILL BE at the end of the
+* substep, so the 27-cell neighbor sweep of the later passes covers both the
+* current and the final configuration. Note that the CPU solver hashed only
+* once per frame (Particles::buildHash), while the GPU pipeline re-hashes on
+* every substep, which is strictly more accurate.
+*/
 
 layout(local_size_x = 64) in;
 
 // ─── SSBOs (bindings must match GPUSPH.cpp) ──────────────────────────
 /**
- * @struct GPUParticle
- * @brief GPU representation of a particle, occupying 48 bytes (3 vec4s).
- * Identical to the struct in density_splat.comp, so the same SSBO can be
- * handed to the Marching Cubes splat pass without any copy or conversion
- * (zero-copy handoff).
- */
+* @struct GPUParticle
+* @brief GPU representation of a particle, occupying 48 bytes (3 vec4s).
+* Identical to the struct in density_splat.comp, so the same SSBO can be
+* handed to the Marching Cubes splat pass without any copy or conversion
+* (zero-copy handoff).
+*/
 struct GPUParticle {
-    vec4 posWeight; ///< xyz = position, w = splatWeight (0 = airborne drop, 1 = settled water).
-    vec4 velAge;    ///< xyz = velocity, w = age.
-    vec4 flags;     ///< x = rainDrop flag (1 = rain drop, recycled at the ground), y,z,w = unused.
+	vec4 posWeight; ///< xyz = position, w = splatWeight (0 = airborne drop, 1 = settled water).
+	vec4 velAge;    ///< xyz = velocity, w = age.
+	vec4 flags;     ///< x = rainDrop flag (1 = rain drop, recycled at the ground), y,z,w = unused.
 };
 
 layout(std430, binding = 0) buffer ParticleBuffer {
-    GPUParticle particles[];
+	GPUParticle particles[];
 };
 
 layout(std430, binding = 2) buffer ForceBuffer {
-    vec4 forces[]; ///< xyz = accumulated force (acceleration), w = unused.
+	vec4 forces[]; ///< xyz = accumulated force (acceleration), w = unused.
 };
 
 layout(std430, binding = 3) buffer PosPredBuffer {
-    vec4 predicted[]; ///< xyz = predicted position at the end of the substep, w = unused.
+	vec4 predicted[]; ///< xyz = predicted position at the end of the substep, w = unused.
 };
 
 /**
- * @brief Single-element accumulator of the substep kinetic energy.
- *
- * Stored as a fixed-point unsigned integer because floating-point atomics
- * require extensions. The integration pass adds speed^2 * kEnergyScale per
- * particle and the CPU divides by (particleCount * kEnergyScale) to recover
- * the mean squared speed.
- */
+* @brief Single-element accumulator of the substep kinetic energy.
+*
+* Stored as a fixed-point unsigned integer because floating-point atomics
+* require extensions. The integration pass adds speed^2 * kEnergyScale per
+* particle and the CPU divides by (particleCount * kEnergyScale) to recover
+* the mean squared speed.
+*/
 layout(std430, binding = 11) buffer EnergyBuffer {
-    uint energyAccum[]; ///< [0] = accumulated sum of squared speeds.
+	uint energyAccum[]; ///< [0] = accumulated sum of squared speeds.
 };
 
 // ─── Uniforms ────────────────────────────────────────────────────────
@@ -64,30 +64,30 @@ uniform float uDt;            ///< Substep delta time in seconds.
 uniform float uGravity;       ///< Gravity acceleration along the Y axis.
 
 /**
- * @brief Clears the force accumulator and computes the predicted position.
- *
- * One invocation per particle. Also serves as the "clear" pass of the frame:
- * density/pressure do not need clearing because every later pass fully
- * overwrites them before reading.
- */
+* @brief Clears the force accumulator and computes the predicted position.
+*
+* One invocation per particle. Also serves as the "clear" pass of the frame:
+* density/pressure do not need clearing because every later pass fully
+* overwrites them before reading.
+*/
 void main() {
-    uint i = gl_GlobalInvocationID.x;
-    if (i >= uint(uParticleCount)) return;
+	uint i = gl_GlobalInvocationID.x;
+	if (i >= uint(uParticleCount)) return;
 
-    // Single invocation clears the kinetic-energy accumulator for the
-    // integration pass of this substep (a barrier follows this dispatch).
-    if (i == 0u)
-        energyAccum[0] = 0u;
+	// Single invocation clears the kinetic-energy accumulator for the
+	// integration pass of this substep (a barrier follows this dispatch).
+	if (i == 0u)
+		energyAccum[0] = 0u;
 
-    vec3 pos = particles[i].posWeight.xyz;
-    vec3 vel = particles[i].velAge.xyz;
+	vec3 pos = particles[i].posWeight.xyz;
+	vec3 vel = particles[i].velAge.xyz;
 
-    // "force" acts as an acceleration: gravity is injected here, and the
-    // pressure + viscosity + XSPH terms accumulate on top of it in the
-    // forces pass (sph_forces.comp).
-    forces[i] = vec4(0.0, uGravity, 0.0, 0.0);
+	// "force" acts as an acceleration: gravity is injected here, and the
+	// pressure + viscosity + XSPH terms accumulate on top of it in the
+	// forces pass (sph_forces.comp).
+	forces[i] = vec4(0.0, uGravity, 0.0, 0.0);
 
-    // Semi-implicit prediction: covers the full displacement of the substep
-    // so the grid built from predicted positions never misses neighbors.
-    predicted[i] = vec4(pos + vel * uDt + vec3(0.0, 0.5 * uGravity * uDt * uDt, 0.0), 0.0);
+	// Semi-implicit prediction: covers the full displacement of the substep
+	// so the grid built from predicted positions never misses neighbors.
+	predicted[i] = vec4(pos + vel * uDt + vec3(0.0, 0.5 * uGravity * uDt * uDt, 0.0), 0.0);
 }

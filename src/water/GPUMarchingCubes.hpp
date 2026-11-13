@@ -147,6 +147,9 @@ public:
 	 */
 	void setWaterLevel(float level) { m_waterLevel = level; }
 
+	/** @brief Sets the fill level scale (multiplier for the particle radius). */
+	void setFillScale(float s) { m_fillScale = s; }
+
 	/** @brief Gets the grid resolution per axis. */
 	int resolution() const { return m_resolution; }
 
@@ -205,6 +208,8 @@ private:
 	float m_splatYScale	   = 2.5f;	 ///< >1 compresses Y and flattens the iso.
 	float m_waterEnergy	   = 0.0f;	 ///< Mean squared particle speed; gates the micro-waves.
 	float m_waterLevel	   = 0.0f;	 ///< World-space height used to flatten the settled mesh.
+
+	float m_fillScale	   = 1.0f;
 
 	GLuint m_maxParticles  = 0;		 ///< Current capacity of the particle SSBO.
 	GLuint m_maxVertices   = 0;		 ///< Capacity of the vertex SSBO (grid.x*grid.y*grid.z*15).

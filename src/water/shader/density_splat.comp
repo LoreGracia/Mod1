@@ -1,16 +1,16 @@
 #version 430 core
 
 /**
- * @file density_splat.comp
- * @brief Pass 1: Density splatting to a 3D texture.
- * 
- * Each particle distributes its contribution (Wyvill kernel) over the grid 
- * points within its radius of influence. The Marching Cubes pass will then 
- * read this texture instead of iterating over particles.
- * 
- * Format: GL_R32UI + imageAtomicAdd (fixed-point), because float atomic adds 
- * on images are not core until OpenGL 4.6.
- */
+* @file density_splat.comp
+* @brief Pass 1: Density splatting to a 3D texture.
+* 
+* Each particle distributes its contribution (Wyvill kernel) over the grid 
+* points within its radius of influence. The Marching Cubes pass will then 
+* read this texture instead of iterating over particles.
+* 
+* Format: GL_R32UI + imageAtomicAdd (fixed-point), because float atomic adds 
+* on images are not core until OpenGL 4.6.
+*/
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
@@ -19,24 +19,24 @@ layout(r32ui, binding = 0) uniform uimage3D uDensity;
 
 // ─── SSBOs ───────────────────────────────────────────────────────────
 /**
- * @struct GPUParticle
- * @brief GPU representation of a particle, occupying 48 bytes (3 vec4s).
- */
+* @struct GPUParticle
+* @brief GPU representation of a particle, occupying 48 bytes (3 vec4s).
+*/
 struct GPUParticle {
-    vec4 posWeight; ///< xyz = position, w = splatWeight (0 = falling drop, 1 = settled water).
-    vec4 velAge;    ///< xyz = velocity, w = age.
-    vec4 flags;     ///< x = rainDrop flag (1 = rain drop, recycled at the ground), y,z,w = unused.
+	vec4 posWeight; ///< xyz = position, w = splatWeight (0 = falling drop, 1 = settled water).
+	vec4 velAge;    ///< xyz = velocity, w = age.
+	vec4 flags;     ///< x = rainDrop flag (1 = rain drop, recycled at the ground), y,z,w = unused.
 };
 
 layout(std430, binding = 0) buffer ParticleBuffer {
-    GPUParticle particles[];
+	GPUParticle particles[];
 };
 
 layout(std430, binding = 2) buffer DrawCmdBuffer {
-    uint vertexCount;
-    uint instanceCount;
-    uint firstVertex;
-    uint baseInstance;
+	uint vertexCount;
+	uint instanceCount;
+	uint firstVertex;
+	uint baseInstance;
 } drawCmd;
 
 // ─── Uniforms ────────────────────────────────────────────────────────
@@ -44,6 +44,7 @@ uniform vec3  uGridMin;           ///< Minimum bounds of the simulation grid.
 uniform vec3  uGridMax;           ///< Maximum bounds of the simulation grid.
 uniform ivec3 uGridSize;          ///< Number of voxels (the texture size is N+1).
 uniform float uParticleRadius;    ///< Radius of influence for the metaball.
+uniform float uFillScale;
 uniform float uDensityScale;      ///< Density multiplier for fixed-point conversion (density * scale -> uint).
 uniform int   uParticleCount;     ///< Number of valid particles (not the SSBO capacity).
 uniform float uFallSpeedCutoff;   ///< Falling drops exceeding this speed do not contribute to density.
@@ -55,75 +56,76 @@ uniform float uSettleSpeed;       ///< If |velocity.y| <= this, the particle is 
 uniform float uSplatYScale;       ///< Vertical kernel compression (>1): metaballs merge horizontally to form a flat sheet.
 
 /**
- * @brief Main execution for density splatting.
- * 
- * Resets the indirect draw command (invocation 0) and processes a single particle 
- * per invocation, distributing its density into the 3D texture using atomic additions.
- */
+* @brief Main execution for density splatting.
+* 
+* Resets the indirect draw command (invocation 0) and processes a single particle 
+* per invocation, distributing its density into the 3D texture using atomic additions.
+*/
 void main() {
-    uint i = gl_GlobalInvocationID.x;
+	uint i = gl_GlobalInvocationID.x;
 
-    // The first invocation resets the indirect draw command.
-    // Done on the GPU to avoid a readback or synchronous upload.
-    if (i == 0u) {
-        drawCmd.vertexCount  = 0u;
-        drawCmd.instanceCount = 1u;
-        drawCmd.firstVertex  = 0u;
-        drawCmd.baseInstance = 0u;
-    }
+	// The first invocation resets the indirect draw command.
+	// Done on the GPU to avoid a readback or synchronous upload.
+	if (i == 0u) {
+		drawCmd.vertexCount  = 0u;
+		drawCmd.instanceCount = 1u;
+		drawCmd.firstVertex  = 0u;
+		drawCmd.baseInstance = 0u;
+	}
 
-    if (i >= uint(uParticleCount)) return;
+	if (i >= uint(uParticleCount)) return;
 
-    // w = splatWeight (0 = falling drop, 1 = settled water).
-    // The CPU classifies by velocity/Y to prevent falling drops from forming 
-    // floating metaballs; those drops are drawn as GL_POINTS instead.
-    vec4  posWeight = particles[i].posWeight;
-    float weight    = posWeight.w;
-    if (weight <= 0.0) return;
+	// w = splatWeight (0 = falling drop, 1 = settled water).
+	// The CPU classifies by velocity/Y to prevent falling drops from forming 
+	// floating metaballs; those drops are drawn as GL_POINTS instead.
+	vec4  posWeight = particles[i].posWeight;
+	float weight    = posWeight.w;
+	if (weight <= 0.0) return;
 
-    // GPU Filter: a fast-falling drop (velocity.y < uFallSpeedCutoff) does not 
-    // inject density into the volume. Thus, the puddle only forms from settled water.
-    float vy = particles[i].velAge.y;
-    if (vy < uFallSpeedCutoff) return;
+	// GPU Filter: a fast-falling drop (velocity.y < uFallSpeedCutoff) does not 
+	// inject density into the volume. Thus, the puddle only forms from settled water.
+	float vy = particles[i].velAge.y;
+	if (vy < uFallSpeedCutoff) return;
 
-    // ── Phase 3.7: only settled water at the bottom ─────────────────
-    // Splatting is allowed if the particle is in the low band OR almost still,
-    // but ALWAYS below the hard ceiling. Airborne drops are excluded and 
-    // continue to be drawn as GL_POINTS.
-    vec3  p     = posWeight.xyz;
-    float relY  = p.y - uGridMin.y;
-    bool  low   = relY <= uSplatHeight;
-    bool  calm  = abs(vy) <= uSettleSpeed;
-    if (!low && !calm) return;
-    if (relY > uSplatMaxHeight) return;
+	// ── Phase 3.7: only settled water at the bottom ─────────────────
+	// Splatting is allowed if the particle is in the low band OR almost still,
+	// but ALWAYS below the hard ceiling. Airborne drops are excluded and 
+	// continue to be drawn as GL_POINTS.
+	vec3  p     = posWeight.xyz;
+	float relY  = p.y - uGridMin.y;
+	bool  low   = relY <= uSplatHeight;
+	bool  calm  = abs(vy) <= uSettleSpeed;
+	if (!low && !calm) return;
+	if (relY > uSplatMaxHeight) return;
 
-    vec3  cell    = (uGridMax - uGridMin) / vec3(uGridSize);
-    float cellMax = max(cell.x, max(cell.y, cell.z));
-    int   R       = int(ceil(uParticleRadius / cellMax));
+	vec3  cell    = (uGridMax - uGridMin) / vec3(uGridSize);
+	float cellMax = max(cell.x, max(cell.y, cell.z));
+	int   R       = int(ceil(uParticleRadius / cellMax));
 
-    vec3  g    = (p - uGridMin) / cell;
-    ivec3 base = ivec3(round(g));
+	vec3  g    = (p - uGridMin) / cell;
+	ivec3 base = ivec3(round(g));
 
-    float r2 = uParticleRadius * uParticleRadius;
-    ivec3 texSize = uGridSize + ivec3(1);
+	float currentRadius = uParticleRadius * uFillScale;
+	float r2 = currentRadius * currentRadius;
+	ivec3 texSize = uGridSize + ivec3(1);
 
-    for (int dz = -R; dz <= R; ++dz)
-    for (int dy = -R; dy <= R; ++dy)
-    for (int dx = -R; dx <= R; ++dx) {
-        ivec3 v = base + ivec3(dx, dy, dz);
-        if (any(lessThan(v, ivec3(0))) || any(greaterThanEqual(v, texSize)))
-            continue;
+	for (int dz = -R; dz <= R; ++dz)
+	for (int dy = -R; dy <= R; ++dy)
+	for (int dx = -R; dx <= R; ++dx) {
+		ivec3 v = base + ivec3(dx, dy, dz);
+		if (any(lessThan(v, ivec3(0))) || any(greaterThanEqual(v, texSize)))
+			continue;
 
-        vec3  gp = uGridMin + vec3(v) * cell;
-        // Anisotropic compression: vertical distance weighs more, flattening 
-        // the field so the iso-surface becomes a horizontal sheet.
-        vec3  d  = p - gp;
-        d.y *= uSplatYScale;
-        float d2 = dot(d, d);
-        if (d2 >= r2) continue;
+		vec3  gp = uGridMin + vec3(v) * cell;
+		// Anisotropic compression: vertical distance weighs more, flattening 
+		// the field so the iso-surface becomes a horizontal sheet.
+		vec3  d  = p - gp;
+		d.y *= uSplatYScale;
+		float d2 = dot(d, d);
+		if (d2 >= r2) continue;
 
-        float f = 1.0 - d2 / r2;
-        float density = f * f * f * weight;
-        imageAtomicAdd(uDensity, v, uint(density * uDensityScale));
-    }
+		float f = 1.0 - d2 / r2;
+		float density = f * f * f * weight;
+		imageAtomicAdd(uDensity, v, uint(density * uDensityScale));
+	}
 }

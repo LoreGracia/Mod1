@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <glm.hpp>
+#include <gtc/matrix_transform.hpp> // Necesario para translate/scale
 #include <gtc/type_ptr.hpp>
 #include <memory>
 #include <scene/Transform.hpp>
@@ -34,7 +35,7 @@ int main()
 		Environment env;
 
 		WWindow::Config cfg;
-		cfg.title		= "SPH Water — 1=rise 2=wave 3=rain  R=reset  Esc=close";
+		cfg.title		= "SPH Water — 1=rise 2=wave 3=rain 4=fill 5=drain R=reset";
 		cfg.width		= 1000;
 		cfg.height		= 700;
 		cfg.glMajor		= 4;
@@ -53,90 +54,74 @@ int main()
 			std::shared_ptr<GPUMarchingCubes> marchingCubes;
 			Particles::Mode					  mode = Particles::Mode::UniformRise;
 			float							  time = 0.f;
+			float							  fillLevel = 1.0f;
+			
+			// Variables para el Fake Volume
+			std::shared_ptr<Shader> volumeShader;
+			std::shared_ptr<Mesh>   volumeMesh;
+			glm::vec3 boundsMin{-1.f, -1.f, -1.f};
+			glm::vec3 boundsMax{ 1.f,  3.f,  1.f};
 		} st;
 
 		env.setInit([&](WWindow& w) {
 			st.shader = std::make_shared<Shader>();
-			// Puntos de lluvia: el vertex shader filtra por el flag rainDrop
-			// (solo las gotas se dibujan; el resto pertenece a la malla).
 			if (!st.shader->loadFromFile("src/water/shader/waterVertex.glsl",
 										 "src/water/shader/waterFrag.frag")) {
 				std::fprintf(stderr, "shader failed\n");
 				return;
 			}
 
-			// Sistema de agua
 			st.water = std::make_shared<Particles>();
 			Particles::Config pcfg;
-			// Caja un poco más pequeña (2x1.5x2 = 6 unidades cúbicas)
 			pcfg.boundsMin = {-1.0f, -1.f, -1.0f};
-			pcfg.boundsMax = {1.0f, 1.0f, 1.0f};
+			pcfg.boundsMax = {1.0f,  3.0f, 1.0f};
 
-			pcfg.h			  = 0.25f;	// Radio más pequeño porque la caja es más pequeña
+			// Guardamos los bounds en el State
+			st.boundsMin = pcfg.boundsMin;
+			st.boundsMax = pcfg.boundsMax;
+
+			pcfg.h			  = 0.25f;
 			pcfg.restDensity  = 150.f;
-			pcfg.particleMass = 0.5f;  // Masa más pequeña para que no haya picos de presión
-			pcfg.stiffness	  = 80.f;  // Fuerza de empuje moderada
-			// Fase 5: viscosidad más baja => líquido, no gelatina. El
-			// amortiguamiento suave (0.99/subpaso) asienta sin "pegajosidad".
-			pcfg.viscosity = 0.12f;
-			pcfg.gravity   = -9.8f;
-			pcfg.damping   = 0.99f;
-			pcfg.substeps  = 8;	 // Subimos a 8 para que la simulación sea más estable y suave
-
+			pcfg.particleMass = 0.5f;
+			pcfg.stiffness	  = 120.f;
+			pcfg.viscosity    = 0.12f;
+			pcfg.gravity      = -9.8f;
+			pcfg.damping      = 0.99f;
+			pcfg.substeps     = 8;
 			pcfg.wallRestitution = 0.0f;
-
-			pcfg.pointSize = 15.0f;	 // Puntos MUY grandes para que se solapen entre sí
+			pcfg.pointSize = 15.0f;
 			pcfg.alpha	   = 0.9f;
-			// Fase 5: margen sobre la superficie REAL del charco (se calcula
-			// dinámicamente en Particles::update a partir de las partículas
-			// asentadas, no con una altura fija).
 			pcfg.rainHideMargin = 0.06f;
 
 			st.marchingCubes = std::make_shared<GPUMarchingCubes>();
-			bool ok			 = st.marchingCubes->init(
-				 pcfg.boundsMin, pcfg.boundsMax,
-				 48,  // Fase 4: más resolución => superficie menos facetada
+			bool ok = st.marchingCubes->init(
+				 pcfg.boundsMin, pcfg.boundsMax, 48,
 				 "src/water/shader/density_splat.comp", "src/water/shader/marching_cubes.comp",
 				 "src/water/shader/meshVertex.glsl", "src/water/shader/meshFrag.frag");
 			if (!ok) {
 				std::fprintf(stderr, "Failed to init Marching Cubes\n");
 			}
-			// Fase 3.6/3.7: charco plano. El iso está en unidades de
-			// "partículas efectivas": el pico de UNA partícula es 1.0, así
-			// que con 1.10 ninguna partícula aislada crea superficie.
+			
 			st.marchingCubes->setIsoLevel(1.05f);
 			st.marchingCubes->setDensityScale(2000.0f);
 			st.marchingCubes->setParticleRadius(0.30f);
 			st.marchingCubes->setFallSpeedCutoff(-1.0f);
-			// Fase 3.7: solo agua acumulada en el fondo + anisotropía Y
-			// (YScale > 1 comprime la distancia vertical y aplana la lámina).
-			st.marchingCubes->setSplatHeight(0.15f);
-			st.marchingCubes->setSplatMaxHeight(0.22f);
+			st.marchingCubes->setSplatHeight(0.25f);
+			st.marchingCubes->setSplatMaxHeight(0.35f);
 			st.marchingCubes->setSettleSpeed(0.5f);
 			st.marchingCubes->setSplatYScale(2.5f);
-			// Fixed level for the constant-volume pool: slightly above the
-			// container floor, matching the splat band used by the mesh.
 			st.marchingCubes->setWaterLevel(pcfg.boundsMin.y + 0.2f);
+			
 			if (const char* m = std::getenv("WATER_MODE")) {
 				switch (std::atoi(m)) {
-				case 1:
-					st.mode = Particles::Mode::UniformRise;
-					break;
-				case 2:
-					st.mode = Particles::Mode::Wave;
-					break;
-				case 3:
-					st.mode = Particles::Mode::Rain;
-					break;
-				default:
-					break;
+				case 1: st.mode = Particles::Mode::UniformRise; break;
+				case 2: st.mode = Particles::Mode::Wave; break;
+				case 3: st.mode = Particles::Mode::Rain; break;
+				default: break;
 				}
 			}
 			st.water->init(1000, st.mode, pcfg);
 
-			// Solver GPU: las partículas CPU solo siembran el estado inicial;
-			// después de este upload, el estado GPU es autoritativo y la
-			// física corre 100% en compute shaders.
 			GPUSPH::Params gcfg;
 			gcfg.h				 = pcfg.h;
 			gcfg.restDensity	 = pcfg.restDensity;
@@ -158,7 +143,8 @@ int main()
 			gcfg.rainSplashSpeed = pcfg.rainSplashSpeed;
 
 			st.gpuSPH = std::make_shared<GPUSPH>();
-			if (!st.gpuSPH->init(1000, gcfg, "src/water/shader/sph_clear_predict.comp",
+			// IMPORTANTE: Reservamos capacidad para 50,000 aunque empecemos con 1000
+			if (!st.gpuSPH->init(50000, gcfg, "src/water/shader/sph_clear_predict.comp",
 								 "src/water/shader/sph_hash.comp", "src/water/shader/sph_density.comp",
 								 "src/water/shader/sph_forces.comp",
 								 "src/water/shader/sph_integrate.comp")) {
@@ -167,24 +153,25 @@ int main()
 			}
 			st.gpuSPH->uploadParticles(st.water->getParticles());
 
-			// Handoff sin copia: el pase de splat consume el SSBO del solver
-			// directamente (mismo layout GPUParticle); ya no hay upload por
-			// frame de partículas.
 			st.marchingCubes->setExternalParticleBuffer(
 				st.gpuSPH->particleBuffer(), static_cast<GLuint>(st.gpuSPH->particleCount()));
 
-			// (Opcional) colisión con terreno:
-			// st.water->setTerrainHeight([](float x, float z) {
-			//     return 0.2f * std::sin(x * 3.f) * std::cos(z * 3.f);
-			// });
-			st.cam = Camera({3.f, 3.f, 4.f}, {0.f, 1.f, 0.f});
+			// ── Inicializar Fake Volume ──
+			st.volumeShader = std::make_shared<Shader>();
+			if (!st.volumeShader->loadFromFile("src/water/shader/volumeVertex.glsl",
+											   "src/water/shader/volumeFrag.frag")) {
+				std::fprintf(stderr, "Volume shader failed to load\n");
+			}
+			st.volumeMesh = std::make_shared<Mesh>();
+			*st.volumeMesh = Mesh::triangle(); // En este proyecto, triangle() genera un cubo
+
+			st.cam = Camera({3.5f, 4.5f, 5.5f}, {0.f, 1.0f, 0.f});
 
 			st.renderer.depthTest(true);
 			st.renderer.cullFace(false);
-			st.renderer.blend(false);  // el blending de partículas se activa en setRender
+			st.renderer.blend(false);
 
 			glEnable(GL_PROGRAM_POINT_SIZE);
-
 			(void)w;
 		});
 
@@ -193,23 +180,40 @@ int main()
 			if (in.isKeyPressed(Key::Code::Escape))
 				w.requestClose();
 
-			// Cambiar modo: re-spawn en CPU (semilla) + re-seed del estado GPU.
 			auto resetSim = [&](Particles::Mode m) {
 				st.mode = m;
 				st.water->reset(m);
 				st.gpuSPH->setRainMode(m == Particles::Mode::Rain);
 				st.gpuSPH->uploadParticles(st.water->getParticles());
+				// Al reiniciar, reseteamos el nivel de llenado
+				st.fillLevel = 1.0f;
+				st.marchingCubes->setFillScale(1.0f);
+				st.marchingCubes->setSplatMaxHeight(0.35f);
+				st.marchingCubes->setSplatHeight(0.25f);
 			};
-			if (in.isKeyPressed(Key::Code::Num1))
-				resetSim(Particles::Mode::UniformRise);
-			if (in.isKeyPressed(Key::Code::Num2))
-				resetSim(Particles::Mode::Wave);
-			if (in.isKeyPressed(Key::Code::Num3))
-				resetSim(Particles::Mode::Rain);
-			if (in.isKeyPressed(Key::Code::R))
-				resetSim(st.mode);
+			
+			if (in.isKeyPressed(Key::Code::Num1)) resetSim(Particles::Mode::UniformRise);
+			if (in.isKeyPressed(Key::Code::Num2)) resetSim(Particles::Mode::Wave);
+			if (in.isKeyPressed(Key::Code::Num3)) resetSim(Particles::Mode::Rain);
+			if (in.isKeyPressed(Key::Code::R))    resetSim(st.mode);
 
-			// Física (100% GPU): ya no hay update/upload CPU por frame.
+			// ── CONTROL DE LLENADO MANUAL (Teclas 4 y 5) ──
+			if (in.isKeyPressed(Key::Code::Num4)) {
+				st.fillLevel += 0.1f;
+				if (st.fillLevel > 3.0f) st.fillLevel = 3.0f;
+			}
+			if (in.isKeyPressed(Key::Code::Num5)) {
+				st.fillLevel -= 0.1f;
+				if (st.fillLevel < 1.0f) st.fillLevel = 1.0f;
+			}
+
+			// Aplicar el nivel de llenado a Marching Cubes
+			st.marchingCubes->setFillScale(st.fillLevel);
+			// El techo de splatting sube junto con el agua para que dibuje la pared vertical
+			float newMaxHeight = 0.35f + (st.fillLevel - 1.0f) * 1.5f;
+			st.marchingCubes->setSplatMaxHeight(newMaxHeight);
+			st.marchingCubes->setSplatHeight(newMaxHeight - 0.05f);
+
 			st.gpuSPH->update(dt);
 			st.marchingCubes->setWaterEnergy(st.gpuSPH->waterEnergy());
 			st.time += dt;
@@ -220,14 +224,10 @@ int main()
 			glm::vec3 right = st.cam.right();
 			glm::vec3 up	= st.cam.up();
 			glm::vec3 move{0.f};
-			if (in.isKeyDown(Key::Code::W))
-				move += fwd;
-			if (in.isKeyDown(Key::Code::S))
-				move -= fwd;
-			if (in.isKeyDown(Key::Code::D))
-				move += right;
-			if (in.isKeyDown(Key::Code::A))
-				move -= right;
+			if (in.isKeyDown(Key::Code::W)) move += fwd;
+			if (in.isKeyDown(Key::Code::S)) move -= fwd;
+			if (in.isKeyDown(Key::Code::D)) move += right;
+			if (in.isKeyDown(Key::Code::A)) move -= right;
 			if (glm::length(move) > 1e-6f)
 				st.cam.move(glm::normalize(move) * speed);
 
@@ -238,9 +238,9 @@ int main()
 			}
 			if (in.scrollDelta() != 0.0)
 				st.cam.orbit(0.f, 0.f, -static_cast<float>(in.scrollDelta()) * 0.5f);
+				
 			if (in.isKeyPressed(Key::Code::Space)) {
 				resetSim(st.mode);
-				std::printf("[reset] Simulación reiniciada con la tecla Espacio\n");
 			}
 		});
 
@@ -251,7 +251,7 @@ int main()
 			else
 				st.renderer.setViewport(w.framebufferWidth(), w.framebufferHeight());
 
-			st.renderer.setClearColor(0.05f, 0.05f, 0.10f, 1.f);
+			st.renderer.setClearColor(0.15f, 0.18f, 0.22f, 1.f); // Fondo gris-azulado
 			st.renderer.clear(true, true, false);
 
 			glm::mat4 vp = st.cam.projection(w.aspect()) * st.cam.view();
@@ -259,26 +259,45 @@ int main()
 			glEnable(GL_BLEND);
 			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-			// st.water->render(*st.shader, vp);
+			// 1. Dibujar las gotas de lluvia (opacas, escriben profundidad)
+			glDepthMask(GL_TRUE);
+			if (st.mode == Particles::Mode::Rain)
+				st.gpuSPH->renderRainDrops(*st.shader, vp);
 
+			// 2. Dibujar el Fake Volume (el cuerpo del agua)
+			// Calculamos la altura visual basándonos en el fillLevel
+			float waterHeight = (st.fillLevel - 1.0f) * 1.5f; 
+			
+			if (waterHeight > 0.01f && st.volumeMesh && st.volumeShader) {
+				glm::mat4 model = glm::mat4(1.0f);
+				float centerY = st.boundsMin.y + waterHeight * 0.5f;
+				model = glm::translate(model, glm::vec3(0.0f, centerY, 0.0f));
+				
+				float sizeX = st.boundsMax.x - st.boundsMin.x;
+				float sizeZ = st.boundsMax.z - st.boundsMin.z;
+				model = glm::scale(model, glm::vec3(sizeX, waterHeight, sizeZ));
+
+				st.volumeShader->use();
+				st.volumeShader->setMat4("uModel", model);
+				st.volumeShader->setMat4("uViewProj", vp);
+				st.volumeShader->setVec3("uCameraPos", st.cam.position());
+				st.volumeShader->setVec3("uWaterDeep", glm::vec3(0.0f, 0.1f, 0.3f));
+				st.volumeShader->setVec3("uWaterShallow", glm::vec3(0.1f, 0.5f, 0.8f));
+				
+				glDepthMask(GL_FALSE); // No escribe prof para que la superficie brille encima
+				st.volumeMesh->draw();
+				glDepthMask(GL_TRUE);
+			}
+
+			// 3. Generar y dibujar la superficie de Marching Cubes
 			st.marchingCubes->generateMesh();
 			if (const char* v = std::getenv("MC_DEBUG_COUNT")) {
 				static int dbgFrame = 0;
 				int		   every	= std::atoi(v);
-				if (every <= 0)
-					every = 1;
+				if (every <= 0) every = 1;
 				if (++dbgFrame % (every * 30) == 0)
-					std::printf("[MC] debug vertexCount = %u\n",
-								st.marchingCubes->debugReadDrawCount());
+					std::printf("[MC] debug vertexCount = %u\n", st.marchingCubes->debugReadDrawCount());
 			}
-
-			// Fase 5: las gotas se dibujan PRIMERO y escriben profundidad,
-			// así el agua (transparente, sin escritura de depth) las ocluye
-			// cuando están sumergidas. Antes se dibujaban encima de la
-			// superficie y parecían flotar.
-			glDepthMask(GL_TRUE);
-			if (st.mode == Particles::Mode::Rain)
-				st.gpuSPH->renderRainDrops(*st.shader, vp);
 
 			glDepthMask(GL_FALSE);
 			st.marchingCubes->render(vp, st.cam.position(), st.time);
