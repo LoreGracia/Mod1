@@ -3,6 +3,7 @@
 
 #include <Particle.hpp>
 #include <Shader.hpp>
+#include <WaterRenderParams.hpp>
 #include <glm.hpp>
 #include <string>
 #include <vector>
@@ -100,8 +101,10 @@ public:
 	 * @param viewProj The combined view-projection matrix.
 	 * @param cameraPos The world-space position of the camera.
 	 * @param time The current application time (for wave animation).
+	 * @param params Shared water material, lighting and volume parameters.
 	 */
-	void render(const glm::mat4& viewProj, const glm::vec3& cameraPos, float time);
+	void render(const glm::mat4& viewProj, const glm::vec3& cameraPos, float time,
+				const WaterRenderParams& params);
 
 	/** @brief Sets the isosurface extraction threshold. */
 	void setIsoLevel(float iso) { m_isoLevel = iso; }

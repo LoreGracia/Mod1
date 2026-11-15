@@ -1,4 +1,5 @@
 #version 430 core
+#include "waterShading.glsl"
 
 /**
 * @file meshFrag.frag
@@ -138,14 +139,7 @@ float foamFbm(vec3 p) {
 * @return The procedural sky color along the given direction.
 */
 vec3 proceduralSky(vec3 dir, vec3 sunDir) {
-	float up = max(dir.y, 0.0);
-	vec3 sky = mix(uSkyHorizon, uSkyZenith, up);
-
-	float sunGlow = pow(max(dot(dir, sunDir), 0.0), 128.0);
-	sky += uSunGlowColor * sunGlow;
-
-	sky = mix(sky, uSkyHorizon * 0.55, 1.0 - smoothstep(-0.35, 0.0, dir.y));
-	return sky;
+	return waterSky(dir, sunDir, uSkyHorizon, uSkyZenith, uSunGlowColor);
 }
 
 /**
@@ -211,56 +205,29 @@ void main() {
 	float foam = smoothstep(uFoamThreshold, uFoamThreshold + 0.5, foamSignal * patches);
 	foam = clamp(foam * uFoamIntensity, 0.0, 1.0);
 
-	vec3 H = normalize(L + V);
-
-	float NdotL = max(dot(N, L), 0.0);
 	float NdotV = max(dot(N, V), 0.0);
 
 	// Aggressive Fresnel (Schlick): transparent center, reflective edges.
-	const float F0 = 0.015;
-	float fresnel = F0 + (1.0 - F0) * pow(1.0 - NdotV, 5.0);
-	fresnel = clamp(fresnel, 0.0, 1.0);
+	float fresnel = waterFresnel(NdotV);
 
 	// Approximate depth-based color within the water AABB.
 	float heightT = clamp((vWorldPos.y - uBoundsMin.y) /
 						max(uBoundsMax.y - uBoundsMin.y, 0.001), 0.0, 1.0);
-	vec3 base = mix(uWaterDeep, uWaterShallow, heightT);
-
-	// Ambient + Diffuse.
-	vec3 ambient = base * 0.50;
-	vec3 diffuse = base * uSunColor * NdotL * 0.50;
-
-	// Blinn-Phong specular: sun glint sharper at grazing angles.
-	float shininess = mix(120.0, 600.0, fresnel);
-	float spec = pow(max(dot(N, H), 0.0), shininess);
-	vec3 specular = uSunColor * spec * (0.50 + 2.0 * fresnel);
+	vec3 base = waterBaseColor(vWorldPos.y, uBoundsMin, uBoundsMax, uWaterDeep, uWaterShallow);
 
 	// Environment reflection: sample the procedural sky with the reflection
 	// vector around the perturbed normal. Fresnel drives the mixing, so the
 	// reflection dominates at grazing angles.
 	vec3 R = reflect(-V, N);
 	vec3 skyColor = proceduralSky(R, L);
-	float sss = pow(max(dot(N, V), 0.0), 2.0) * 0.3;
-	vec3 subSurface = vec3(0.1, 0.4, 0.6) * sss;
 
-	vec3 color = ambient + diffuse + subSurface;
-	color = mix(color, skyColor, fresnel);
-	// The sun glint is added on top of the reflected sky so both highlights
-	// coexist (the sky halo does not replace the specular lobe).
-	color += specular;
-
-		// Subtle highlight on the wave crests.
-	color += uSunColor * max(g.x + g.y, 0.0) * 0.15 * fresnel;
+	// Shared shading: ambient, diffuse, subsurface, Fresnel-driven sky
+	// reflection, Blinn-Phong sun glint, wave-crest highlight and foam.
+	vec3 color = waterShade(N, V, base, L, uSunColor, fresnel, skyColor,
+							foam, uFoamColor, g);
 
 	// Transparency: the center lets the background through, edges are opaque.
-	float alpha = mix(0.65, 0.98, fresnel);
-	alpha = mix(alpha, 0.85, heightT * 0.25);
-
-	// Foam scatters light diffusely and masks the sky reflection, so it is
-	// blended after the water shading and raises alpha to fully opaque.
-	vec3 foamLit = uFoamColor * (0.55 + 0.45 * NdotL);
-	color = mix(color, foamLit, foam);
-	alpha = mix(alpha, 1.0, foam);
+	float alpha = waterAlpha(fresnel, heightT, foam);
 
 	FragColor = vec4(color, clamp(alpha, 0.0, 1.0));
 }

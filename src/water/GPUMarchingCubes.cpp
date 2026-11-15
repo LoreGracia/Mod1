@@ -357,8 +357,10 @@ GLuint GPUMarchingCubes::debugReadDrawCount() const
  * @param viewProj The combined view-projection matrix.
  * @param cameraPos The world-space position of the camera.
  * @param time The current application time (for wave animation).
+ * @param params Shared water material, lighting and volume parameters.
  */
-void GPUMarchingCubes::render(const glm::mat4& viewProj, const glm::vec3& cameraPos, float time)
+void GPUMarchingCubes::render(const glm::mat4& viewProj, const glm::vec3& cameraPos, float time,
+							  const WaterRenderParams& params)
 {
 	if (!m_initialized)
 		return;
@@ -366,31 +368,15 @@ void GPUMarchingCubes::render(const glm::mat4& viewProj, const glm::vec3& camera
 	m_meshShader.use();
 	m_meshShader.setMat4("uViewProj", viewProj);
 	m_meshShader.setVec3("uCameraPos", cameraPos);
-	m_meshShader.setVec3("uSunDir", glm::normalize(glm::vec3(0.55f, 1.0f, 0.35f)));
-	m_meshShader.setVec3("uSunColor", glm::vec3(1.00f, 0.95f, 0.82f));
-	// Procedural sky sampled by the water reflection vector: warm horizon,
-	// deep zenith and a warm sun halo.
-	m_meshShader.setVec3("uSkyHorizon", glm::vec3(0.82f, 0.66f, 0.50f));
-	m_meshShader.setVec3("uSkyZenith", glm::vec3(0.06f, 0.18f, 0.42f));
-	m_meshShader.setVec3("uSunGlowColor", glm::vec3(1.00f, 0.83f, 0.58f));
-	m_meshShader.setVec3("uWaterDeep", glm::vec3(0.015f, 0.10f, 0.28f));
-	m_meshShader.setVec3("uWaterShallow", glm::vec3(0.10f, 0.48f, 0.78f));
-	m_meshShader.setVec3("uBoundsMin", m_boundsMin);
-	m_meshShader.setVec3("uBoundsMax", m_boundsMax);
+
+	// Shared material uniforms: the volume shader receives the same values.
+	applyWaterUniforms(m_meshShader, params);
+
 	m_meshShader.setFloat("uTime", time);
 	// Fluid energy gates the micro-waves so a settled pool becomes flat.
 	m_meshShader.setFloat("uWaterEnergy", m_waterEnergy);
 	// Height the vertex stage collapses to when the fluid is at rest.
 	m_meshShader.setFloat("uWaterLevel", m_waterLevel);
-
-	// Procedural foam driven by surface curvature, the wave-field flow and
-	// fractal noise. Tuned for broad, abundant coverage across the wave
-	// surface with soft-edged patches.
-	m_meshShader.setVec3("uFoamColor", glm::vec3(0.92f, 0.96f, 1.00f));
-	m_meshShader.setFloat("uFoamIntensity", 1.00f);
-	m_meshShader.setFloat("uFoamThreshold", 0.45f);
-	m_meshShader.setFloat("uFoamScale", 4.50f);
-	m_meshShader.setFloat("uFoamSpeed", 2.50f);
 
 	glBindVertexArray(m_emptyVAO);
 	glBindBuffer(GL_DRAW_INDIRECT_BUFFER, m_drawCmdSSBO);

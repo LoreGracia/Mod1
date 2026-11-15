@@ -29,6 +29,7 @@ uniform float uDensityMax;  ///< Maximum density for color/size mapping.
 // by the GPU density pass.
 uniform float uHideBelowY;  ///< Height threshold to hide settled particles.
 uniform float uSplashSpeed; ///< If |velocity| >= this, the particle is splashing and remains visible.
+uniform float uSurfaceY;    ///< Authoritative water surface: drops below it are inside the body.
 
 out float vDensity; ///< Passes density to the fragment shader.
 
@@ -37,6 +38,14 @@ out float vDensity; ///< Passes density to the fragment shader.
 */
 void main() {
 	vDensity = aDensity;
+
+	// Drops below the authoritative surface are inside the water body and
+	// must not be drawn over the opaque volume.
+	if (aPos.y < uSurfaceY) {
+		gl_Position  = vec4(2.0, 2.0, 2.0, 1.0);
+		gl_PointSize = 0.0;
+		return;
+	}
 
 	// Non rain-drop particles are never drawn as points: they belong to the
 	// water surface mesh. A rain drop is hidden once it has merged into the

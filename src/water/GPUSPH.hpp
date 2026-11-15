@@ -20,7 +20,7 @@
  * Owns the GPU-side particle state (SoA layout spread over several SSBOs) and
  * dispatches the compute passes of the solver: Clear & Predict, GPU spatial
  * hash, Density & Pressure, Forces & XSPH and Integration (collisions and
- * rain recycling included).
+ * rain landing/settling included).
  * The particle SSBO uses the same GPUParticle layout as the Marching Cubes
  * splat pass (3 x vec4, 48 bytes), so it can be shared with
  * GPUMarchingCubes without CPU round-trips, and the airborne rain drops can
@@ -61,6 +61,7 @@ public:
 		float rainAlpha		= 0.75f;	///< Alpha of the airborne rain drops.
 		glm::vec3 rainColor{0.55f, 0.80f, 1.0f};	///< Color of the airborne rain drops.
 		float rainSplashSpeed = 0.6f;	///< Speed below which a settled drop is hidden.
+		float rainSettleFraction = 1.0f; ///< Fraction of landing drops converted into settled water.
 
 		glm::vec3 boundsMin{-1.f, 0.f, -1.f};  ///< Minimum bounds of the container.
 		glm::vec3 boundsMax{1.f, 3.f, 1.f};	   ///< Maximum bounds of the container.
@@ -106,11 +107,25 @@ public:
 	void uploadParticles(const std::vector<Particle>& particles);
 
 	/**
+	 * @brief Appends new rain-drop particles at the top of the container.
+	 *
+	 * Grows the active particle range without touching the state of the
+	 * particles already simulated on the GPU. Each appended drop starts with
+	 * a random XZ position inside the container, a downward velocity and the
+	 * rain-drop flag set, so the integration pass can convert it into settled
+	 * water when it reaches the ground.
+	 *
+	 * @param count Number of drops to append, clamped to the free capacity.
+	 * @return Number of particles actually appended.
+	 */
+	size_t emitRainParticles(size_t count);
+
+	/**
 	 * @brief Runs one frame of the SPH pipeline on the GPU.
 	 *
 	 * Each substep dispatches the full chain: Clear & Predict, the six
 	 * counting-sort phases of the spatial hash, Density & Pressure, Forces &
-	 * XSPH and Integration (collisions + rain recycling + classification).
+	 * XSPH and Integration (collisions + rain landing/settling + classification).
 	 *
 	 * @param dt Delta time in seconds.
 	 */
@@ -154,7 +169,7 @@ public:
 	const Params& params() const { return m_params; }
 
 	/**
-	 * @brief Toggles the rain mode (airborne classification + drop recycling).
+	 * @brief Toggles the rain mode (airborne classification + drop landing/settling).
 	 * @param on True to enable the rain behavior, false to disable it.
 	 */
 	void setRainMode(bool on) { m_params.rainMode = on; }
@@ -308,7 +323,7 @@ private:
 	 * Binds the SSBOs, sets the pass uniforms and issues the dispatch with a
 	 * trailing memory barrier. Applies the forces and the XSPH delta to the
 	 * velocities, moves the particles, resolves the boundary collisions and
-	 * the rain recycling, and classifies splatWeight.
+	 * the rain landing/settling, and classifies splatWeight.
 	 *
 	 * @param subDt Substep delta time applied to the integration.
 	 */
@@ -334,7 +349,7 @@ private:
 	Shader m_hashShader;		  ///< sph_hash.comp (phases multiplexed via uPhase).
 	Shader m_densityShader;			///< sph_density.comp (Poly6 density + equation of state).
 	Shader m_forcesShader;			///< sph_forces.comp (Spiky + Laplacian forces + XSPH delta).
-	Shader m_integrateShader;		///< sph_integrate.comp (Euler integration + collisions + recycling).
+	Shader m_integrateShader;		///< sph_integrate.comp (Euler integration + collisions + landing/settling).
 
 	glm::ivec3 m_gridSize{0};	   ///< Grid cells per axis.
 	int		   m_numCells  = 0;	   ///< Total number of grid cells (gx*gy*gz).
@@ -346,6 +361,7 @@ private:
 	size_t m_maxParticles	= 0;		///< Capacity of the per-particle SSBOs.
 	size_t m_particleCount	= 0;		///< Valid particles in the SSBOs.
 	unsigned m_recycleSeed = 0;	///< Seed of the respawn RNG, advanced every substep.
+	unsigned m_emitSeed	   = 0x9e3779b9u; ///< Seed of the CPU-side rain emitter RNG.
 	float  m_waterEnergy	= 0.f;	///< Smoothed mean squared particle speed of the last frame.
 	bool   m_initialized	= false;	///< Flag indicating if the pipeline is ready.
 };

@@ -7,7 +7,7 @@
  * pass (Poly6 kernel + equation of state over the sorted neighbor ranges),
  * the Forces & XSPH pass (Spiky pressure + Laplacian viscosity + XSPH
  * velocity smoothing over the same ranges) and the Integration pass
- * (semi-implicit Euler, boundary collisions, rain recycling and
+ * (semi-implicit Euler, boundary collisions, rain landing/settling and
  * classification, updating the particle state in place).
  */
 
@@ -59,6 +59,19 @@ constexpr int INTEGRATE_WORKGROUP_SIZE = 64;
 GLuint groupsFor(size_t n, int local)
 {
 	return static_cast<GLuint>((n + static_cast<size_t>(local) - 1) / static_cast<size_t>(local));
+}
+
+/**
+ * @brief Draws the next uniform [0, 1) float from a PCG-style RNG stream.
+ * @param state RNG state, advanced in place.
+ * @return A uniform float in [0, 1).
+ */
+float nextUnit(unsigned& state)
+{
+	state	   = state * 747796405u + 2891336453u;
+	unsigned word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+	word	   = (word >> 22u) ^ word;
+	return static_cast<float>(word) * (1.0f / 4294967296.0f);
 }
 
 }  // namespace
@@ -265,6 +278,51 @@ void GPUSPH::uploadParticles(const std::vector<Particle>& particles)
 }
 
 /**
+ * @brief Appends new rain-drop particles at the top of the container.
+ *
+ * The already simulated prefix of the particle SSBO is left untouched; the
+ * new records are written after it with glBufferSubData. New drops represent
+ * water injected into the domain, so the active count increases and the
+ * integration pass can settle them once they reach the ground.
+ *
+ * @param count Number of drops to append, clamped to the free capacity.
+ * @return Number of particles actually appended.
+ */
+size_t GPUSPH::emitRainParticles(size_t count)
+{
+	if (!m_initialized || count == 0)
+		return 0;
+
+	const size_t freeSlots = m_maxParticles - m_particleCount;
+	if (count > freeSlots)
+		count = freeSlots;
+	if (count == 0)
+		return 0;
+
+	std::vector<GPUParticle> staging(count);
+	for (size_t i = 0; i < count; ++i) {
+		const float x = m_params.boundsMin.x + 0.05f +
+						nextUnit(m_emitSeed) * (m_params.boundsMax.x - m_params.boundsMin.x - 0.1f);
+		const float z = m_params.boundsMin.z + 0.05f +
+						nextUnit(m_emitSeed) * (m_params.boundsMax.z - m_params.boundsMin.z - 0.1f);
+		const float y = m_params.boundsMax.y - nextUnit(m_emitSeed) * 0.15f;
+		const float vy = -3.0f - nextUnit(m_emitSeed) * 1.5f;
+		staging[i].posWeight = glm::vec4(x, y, z, 0.0f);
+		staging[i].velAge	 = glm::vec4(0.0f, vy, 0.0f, 0.0f);
+		staging[i].flags	 = glm::vec4(1.0f, 0.0f, 0.0f, 0.0f);
+	}
+
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_particleSSBO);
+	glBufferSubData(GL_SHADER_STORAGE_BUFFER,
+					static_cast<GLintptr>(m_particleCount * sizeof(GPUParticle)),
+					static_cast<GLsizeiptr>(count * sizeof(GPUParticle)), staging.data());
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+	m_particleCount += count;
+	return count;
+}
+
+/**
  * @brief Dispatches Clear & Predict and the six counting-sort phases.
  *
  * All SSBOs are bound to their fixed binding points and one memory barrier
@@ -408,7 +466,7 @@ void GPUSPH::computeForces()
  *
  * One invocation per particle: applies the force and the XSPH delta to the
  * velocity (with damping and the speed clamp), moves the particle, resolves
- * the ground/wall/ceiling collisions, recycles rain drops that touch the
+ * the ground/wall/ceiling collisions, settles rain drops that touch the
  * ground and classifies splatWeight on the post-move state.
  *
  * @param subDt Substep delta time applied to the integration.
@@ -431,6 +489,7 @@ void GPUSPH::integrateParticles(float subDt)
 	m_integrateShader.setInt("uRainMode", m_params.rainMode ? 1 : 0);
 	m_integrateShader.setFloat("uSettleSpeed", m_params.rainSettleSpeed);
 	m_integrateShader.setFloat("uAirY", m_params.boundsMax.y - m_params.rainAirBand);
+	m_integrateShader.setFloat("uRainSettleFraction", m_params.rainSettleFraction);
 	m_integrateShader.setInt("uSeed", static_cast<int>(m_recycleSeed));
 	m_integrateShader.dispatch(groupsFor(m_particleCount, INTEGRATE_WORKGROUP_SIZE), 1, 1);
 	glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
@@ -441,7 +500,7 @@ void GPUSPH::integrateParticles(float subDt)
  *
  * Each substep executes the full chain: Clear & Predict, Spatial Hash,
  * Density & Pressure, Forces & XSPH and Integration (collisions, rain
- * recycling and classification).
+ * landing/settling and classification).
  *
  * @param dt Delta time in seconds.
  */

@@ -3,7 +3,7 @@
 /**
 * @file sph_integrate.comp
 * @brief Final SPH pass: semi-implicit Euler integration, boundary
-* collisions, rain recycling and the settled/airborne classification.
+* collisions, rain landing/settling and the settled/airborne classification.
 *
 * Executed right after sph_forces.comp, once per substep. One invocation
 * per particle applies, in the same order as the CPU solver:
@@ -12,8 +12,9 @@
 *   2. Position update (pos += vel * dt) and age advance.
 *   3. Collisions: flat ground at boundsMin.y (with restitution and
 *      horizontal friction) and the container walls and ceiling.
-*   4. Rain recycling: rain-drop particles touching the ground band are
-*      respawned at the top with a fresh downward velocity.
+*   4. Rain landing: rain-drop particles touching the ground band become
+*      settled water. A configurable fraction is still respawned at the top
+*      so the rain emitter can keep a visual stream if requested.
 *   5. Settled vs airborne classification of splatWeight, evaluated on the
 *      post-move state (the CPU classifies on the final state of the last
 *      substep; evaluating every substep yields the same final result).
@@ -46,7 +47,7 @@ layout(local_size_x = 64) in;
 struct GPUParticle {
 	vec4 posWeight; ///< xyz = position, w = splatWeight (0 = airborne drop, 1 = settled water).
 	vec4 velAge;    ///< xyz = velocity, w = age.
-	vec4 flags;     ///< x = rainDrop flag (1 = rain drop, recycled at the ground), y,z,w = unused.
+	vec4 flags;     ///< x = rainDrop flag (1 = rain drop, settled or respawned at the ground), y,z,w = unused.
 };
 
 layout(std430, binding = 0) buffer ParticleBuffer {
@@ -80,9 +81,10 @@ uniform float uMaxSpeed;         ///< Velocity clamp for stability.
 uniform vec3  uBoundsMin;       ///< Minimum corner of the container.
 uniform vec3  uBoundsMax;       ///< Maximum corner of the container.
 uniform float uWallRestitution; ///< Bounciness of the container walls.
-uniform int   uRainMode;        ///< 1 = rain mode: classification + recycling active.
+uniform int   uRainMode;        ///< 1 = rain mode: classification + landing/settling active.
 uniform float uSettleSpeed;     ///< Speed above which a particle counts as airborne.
 uniform float uAirY;            ///< Height of the lower edge of the airborne band.
+uniform float uRainSettleFraction; ///< Fraction of landing drops converted into settled water.
 uniform int   uSeed;             ///< Per-dispatch seed of the respawn RNG.
 
 /**
@@ -107,7 +109,7 @@ float rand01(inout uint seed) {
 }
 
 /**
-* @brief Integrates one particle and resolves collisions and recycling.
+* @brief Integrates one particle and resolves collisions and landing/settling.
 *
 * All numeric constants (ground friction, recycle band, respawn height
 * band and respawn speed) mirror the hardcoded values of the CPU solver.
@@ -167,19 +169,25 @@ void main() {
 		vel.y = -vel.y * e;
 	}
 
-	// 4. Rain recycling: rain drops touching the ground band respawn at
-	//    the top with a fresh downward velocity (CPU solver constants).
+	// 4. Rain landing: a drop touching the ground band is converted into
+	//    settled water. Only the configured non-settling fraction is
+	//    respawned at the top to keep an airborne visual stream.
 	if (uRainMode != 0 && flags.x > 0.5 && pos.y <= ground + 0.05) {
 		uint  seed = pcgHash(gl_GlobalInvocationID.x ^ uint(uSeed));
-		float rx   = rand01(seed);
-		float rz   = rand01(seed);
-		float ry   = rand01(seed);
-		float rv   = rand01(seed);
-		pos = vec3(mix(uBoundsMin.x + 0.05, uBoundsMax.x - 0.05, rx),
-				uBoundsMax.y - ry * 0.15,
-				mix(uBoundsMin.z + 0.05, uBoundsMax.z - 0.05, rz));
-		vel = vec3(0.0, -3.0 - rv * 1.5, 0.0);
-		age = 0.0;
+		float r    = rand01(seed);
+		if (r < uRainSettleFraction) {
+			flags.x = 0.0; // Settled water: the splat pass may now render it.
+		} else {
+			float rx = rand01(seed);
+			float rz = rand01(seed);
+			float ry = rand01(seed);
+			float rv = rand01(seed);
+			pos = vec3(mix(uBoundsMin.x + 0.05, uBoundsMax.x - 0.05, rx),
+					uBoundsMax.y - ry * 0.15,
+					mix(uBoundsMin.z + 0.05, uBoundsMax.z - 0.05, rz));
+			vel = vec3(0.0, -3.0 - rv * 1.5, 0.0);
+			age = 0.0;
+		}
 	}
 
 	// 5. Settled vs airborne classification on the post-move state.

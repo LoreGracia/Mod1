@@ -19,6 +19,7 @@
 #include <Renderer.hpp>
 #include <Shader.hpp>
 #include <WWindow.hpp>
+#include <WaterRenderParams.hpp>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -35,7 +36,7 @@ int main()
 		Environment env;
 
 		WWindow::Config cfg;
-		cfg.title		= "SPH Water — 1=rise 2=wave 3=rain 4=fill 5=drain R=reset";
+		cfg.title		= "SPH Water — 1=rise 2=wave 3=rain R=reset";
 		cfg.width		= 1000;
 		cfg.height		= 700;
 		cfg.glMajor		= 4;
@@ -54,13 +55,18 @@ int main()
 			std::shared_ptr<GPUMarchingCubes> marchingCubes;
 			Particles::Mode					  mode = Particles::Mode::UniformRise;
 			float							  time = 0.f;
-			float							  fillLevel = 1.0f;
+			float							  waterVolume = 0.f;
+			float							  surfaceY = -1.f;
+			float							  rainRate = 0.10f;
+			float							  particleVolume = 1.f;
+			float							  emitAccumulator = 0.f;
 			
 			// Variables para el Fake Volume
 			std::shared_ptr<Shader> volumeShader;
 			std::shared_ptr<Mesh>   volumeMesh;
 			glm::vec3 boundsMin{-1.f, -1.f, -1.f};
 			glm::vec3 boundsMax{ 1.f,  3.f,  1.f};
+			WaterRenderParams waterParams;
 		} st;
 
 		env.setInit([&](WWindow& w) {
@@ -79,10 +85,17 @@ int main()
 			// Guardamos los bounds en el State
 			st.boundsMin = pcfg.boundsMin;
 			st.boundsMax = pcfg.boundsMax;
+			st.surfaceY = pcfg.boundsMin.y;
+			st.waterParams.boundsMin = pcfg.boundsMin;
+			st.waterParams.boundsMax = pcfg.boundsMax;
+			st.waterParams.surfaceY = st.surfaceY;
+			st.waterParams.deep		 = glm::vec3(0.01f, 0.05f, 0.15f);
+			st.waterParams.shallow	 = glm::vec3(0.05f, 0.25f, 0.50f);
 
 			pcfg.h			  = 0.25f;
 			pcfg.restDensity  = 150.f;
 			pcfg.particleMass = 0.5f;
+			st.particleVolume = pcfg.particleMass / pcfg.restDensity;
 			pcfg.stiffness	  = 120.f;
 			pcfg.viscosity    = 0.12f;
 			pcfg.gravity      = -9.8f;
@@ -106,11 +119,9 @@ int main()
 			st.marchingCubes->setDensityScale(2000.0f);
 			st.marchingCubes->setParticleRadius(0.30f);
 			st.marchingCubes->setFallSpeedCutoff(-1.0f);
-			st.marchingCubes->setSplatHeight(0.25f);
-			st.marchingCubes->setSplatMaxHeight(0.35f);
 			st.marchingCubes->setSettleSpeed(0.5f);
 			st.marchingCubes->setSplatYScale(2.5f);
-			st.marchingCubes->setWaterLevel(pcfg.boundsMin.y + 0.2f);
+			st.marchingCubes->setWaterLevel(pcfg.boundsMin.y);
 			
 			if (const char* m = std::getenv("WATER_MODE")) {
 				switch (std::atoi(m)) {
@@ -151,7 +162,10 @@ int main()
 				std::fprintf(stderr, "Failed to init GPU SPH\n");
 				return;
 			}
-			st.gpuSPH->uploadParticles(st.water->getParticles());
+			if (st.mode == Particles::Mode::Rain)
+				st.gpuSPH->uploadParticles(std::vector<Particle>{});
+			else
+				st.gpuSPH->uploadParticles(st.water->getParticles());
 
 			st.marchingCubes->setExternalParticleBuffer(
 				st.gpuSPH->particleBuffer(), static_cast<GLuint>(st.gpuSPH->particleCount()));
@@ -180,39 +194,91 @@ int main()
 			if (in.isKeyPressed(Key::Code::Escape))
 				w.requestClose();
 
-			auto resetSim = [&](Particles::Mode m) {
+			auto resetSim = [&](Particles::Mode m, bool resetVolume) {
+				const bool wasRain = (st.mode == Particles::Mode::Rain);
 				st.mode = m;
 				st.water->reset(m);
 				st.gpuSPH->setRainMode(m == Particles::Mode::Rain);
-				st.gpuSPH->uploadParticles(st.water->getParticles());
-				// Al reiniciar, reseteamos el nivel de llenado
-				st.fillLevel = 1.0f;
-				st.marchingCubes->setFillScale(1.0f);
-				st.marchingCubes->setSplatMaxHeight(0.35f);
-				st.marchingCubes->setSplatHeight(0.25f);
+
+				if (m == Particles::Mode::Rain) {
+					// Repeated rain restarts keep the GPU state untouched so
+					// the accumulated drops do not vanish. Entering rain from
+					// another mode reseeds the preserved logical volume.
+					if (!wasRain || resetVolume) {
+						st.gpuSPH->uploadParticles(std::vector<Particle>{});
+						if (!resetVolume) {
+							const float safeParticleVolume =
+								st.particleVolume > 1e-6f ? st.particleVolume : 1e-6f;
+							const size_t seedCount =
+								static_cast<size_t>(st.waterVolume / safeParticleVolume);
+							st.gpuSPH->emitRainParticles(seedCount);
+						}
+					}
+				} else {
+					st.gpuSPH->uploadParticles(st.water->getParticles());
+				}
+
+				if (resetVolume) {
+					st.waterVolume    = 0.0f;
+					st.surfaceY       = st.boundsMin.y;
+					st.emitAccumulator = 0.0f;
+				}
 			};
-			
-			if (in.isKeyPressed(Key::Code::Num1)) resetSim(Particles::Mode::UniformRise);
-			if (in.isKeyPressed(Key::Code::Num2)) resetSim(Particles::Mode::Wave);
-			if (in.isKeyPressed(Key::Code::Num3)) resetSim(Particles::Mode::Rain);
-			if (in.isKeyPressed(Key::Code::R))    resetSim(st.mode);
 
-			// ── CONTROL DE LLENADO MANUAL (Teclas 4 y 5) ──
-			if (in.isKeyPressed(Key::Code::Num4)) {
-				st.fillLevel += 0.1f;
-				if (st.fillLevel > 3.0f) st.fillLevel = 3.0f;
-			}
-			if (in.isKeyPressed(Key::Code::Num5)) {
-				st.fillLevel -= 0.1f;
-				if (st.fillLevel < 1.0f) st.fillLevel = 1.0f;
+			const bool resetVolume = in.isKeyPressed(Key::Code::R);
+			if (in.isKeyPressed(Key::Code::Num1)) resetSim(Particles::Mode::UniformRise, false);
+			if (in.isKeyPressed(Key::Code::Num2)) resetSim(Particles::Mode::Wave, false);
+			if (in.isKeyPressed(Key::Code::Num3)) resetSim(Particles::Mode::Rain, false);
+			if (resetVolume)					  resetSim(st.mode, true);
+
+			// ── LLENADO AUTOMÁTICO ──
+			// El volumen solo crece mientras llueve. Al salir de Rain queda
+			// congelado (no se reduce) y la superficie se deriva de él.
+			float areaXZ = (st.boundsMax.x - st.boundsMin.x) *
+						   (st.boundsMax.z - st.boundsMin.z);
+			if (areaXZ < 1e-4f)
+				areaXZ = 1e-4f;
+
+			if (st.mode == Particles::Mode::Rain) {
+				const float safeParticleVolume =
+					st.particleVolume > 1e-6f ? st.particleVolume : 1e-6f;
+				const float maxVolume =
+					(st.boundsMax.y - st.boundsMin.y - 0.1f) * areaXZ;
+
+				// Stop both the level and the emitter once the container is
+				// full; the already airborne drops fall and hide below the
+				// surface instead of spawning new ones.
+				if (st.waterVolume < maxVolume) {
+					st.waterVolume += dt * st.rainRate;
+					if (st.waterVolume > maxVolume)
+						st.waterVolume = maxVolume;
+
+					// Emit one drop per particle-volume so the physical mass
+					// and the logical volume advance at the same rate.
+					const float emitRate = st.rainRate / safeParticleVolume;
+					st.emitAccumulator += dt * emitRate;
+					const size_t toEmit = static_cast<size_t>(st.emitAccumulator);
+					if (toEmit > 0) {
+						st.emitAccumulator -= static_cast<float>(toEmit);
+						st.gpuSPH->emitRainParticles(toEmit);
+					}
+				}
 			}
 
-			// Aplicar el nivel de llenado a Marching Cubes
-			st.marchingCubes->setFillScale(st.fillLevel);
-			// El techo de splatting sube junto con el agua para que dibuje la pared vertical
-			float newMaxHeight = 0.35f + (st.fillLevel - 1.0f) * 1.5f;
-			st.marchingCubes->setSplatMaxHeight(newMaxHeight);
-			st.marchingCubes->setSplatHeight(newMaxHeight - 0.05f);
+			st.marchingCubes->setExternalParticleBuffer(
+				st.gpuSPH->particleBuffer(), static_cast<GLuint>(st.gpuSPH->particleCount()));
+
+			st.surfaceY = glm::clamp(st.boundsMin.y + st.waterVolume / areaXZ,
+									 st.boundsMin.y, st.boundsMax.y - 0.1f);
+			st.waterParams.surfaceY = st.surfaceY;
+
+			float heightRatio = (st.surfaceY - st.boundsMin.y) /
+								(st.boundsMax.y - st.boundsMin.y);
+
+			st.marchingCubes->setWaterLevel(st.waterParams.surfaceY);
+			st.marchingCubes->setFillScale(1.0f + heightRatio * 5.0f);
+			st.marchingCubes->setSplatMaxHeight(st.surfaceY - st.boundsMin.y + 0.3f);
+			st.marchingCubes->setSplatHeight(st.surfaceY - st.boundsMin.y + 0.1f);
 
 			st.gpuSPH->update(dt);
 			st.marchingCubes->setWaterEnergy(st.gpuSPH->waterEnergy());
@@ -240,7 +306,7 @@ int main()
 				st.cam.orbit(0.f, 0.f, -static_cast<float>(in.scrollDelta()) * 0.5f);
 				
 			if (in.isKeyPressed(Key::Code::Space)) {
-				resetSim(st.mode);
+				resetSim(st.mode, false);
 			}
 		});
 
@@ -261,12 +327,15 @@ int main()
 
 			// 1. Dibujar las gotas de lluvia (opacas, escriben profundidad)
 			glDepthMask(GL_TRUE);
-			if (st.mode == Particles::Mode::Rain)
+			if (st.mode == Particles::Mode::Rain) {
+				st.shader->use();
+				st.shader->setFloat("uSurfaceY", st.waterParams.surfaceY);
 				st.gpuSPH->renderRainDrops(*st.shader, vp);
+			}
 
 			// 2. Dibujar el Fake Volume (el cuerpo del agua)
-			// Calculamos la altura visual basándonos en el fillLevel
-			float waterHeight = (st.fillLevel - 1.0f) * 1.5f; 
+			// La altura visual sale de la misma superficie que Marching Cubes.
+			float waterHeight = st.waterParams.surfaceY - st.boundsMin.y;
 			
 			if (waterHeight > 0.01f && st.volumeMesh && st.volumeShader) {
 				glm::mat4 model = glm::mat4(1.0f);
@@ -278,11 +347,10 @@ int main()
 				model = glm::scale(model, glm::vec3(sizeX, waterHeight, sizeZ));
 
 				st.volumeShader->use();
+				applyWaterUniforms(*st.volumeShader, st.waterParams);
 				st.volumeShader->setMat4("uModel", model);
 				st.volumeShader->setMat4("uViewProj", vp);
 				st.volumeShader->setVec3("uCameraPos", st.cam.position());
-				st.volumeShader->setVec3("uWaterDeep", glm::vec3(0.0f, 0.1f, 0.3f));
-				st.volumeShader->setVec3("uWaterShallow", glm::vec3(0.1f, 0.5f, 0.8f));
 				
 				glDepthMask(GL_FALSE); // No escribe prof para que la superficie brille encima
 				st.volumeMesh->draw();
@@ -300,7 +368,7 @@ int main()
 			}
 
 			glDepthMask(GL_FALSE);
-			st.marchingCubes->render(vp, st.cam.position(), st.time);
+			st.marchingCubes->render(vp, st.cam.position(), st.time, st.waterParams);
 
 			glDepthMask(GL_TRUE);
 			glDisable(GL_BLEND);

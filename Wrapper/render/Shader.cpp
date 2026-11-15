@@ -31,6 +31,60 @@ std::string readFile(const std::string& path)
 	ss << file.rdbuf();
 	return ss.str();
 }
+
+/**
+ * @brief Extracts the directory prefix of a file path.
+ * @param path File path using either slash style.
+ * @return The directory prefix including the trailing separator, or an empty string.
+ */
+std::string directoryOf(const std::string& path)
+{
+	const size_t slash = path.find_last_of("/\\");
+	return slash == std::string::npos ? std::string() : path.substr(0, slash + 1);
+}
+
+/**
+ * @brief Resolves quoted #include directives in a shader source.
+ *
+ * Includes are resolved relative to the directory of the including file.
+ * Angle-bracket includes are left untouched so they can still be handled by
+ * the driver if needed.
+ *
+ * @param source Source text to preprocess.
+ * @param baseDir Directory of the file that produced the source.
+ * @param depth Current recursion depth.
+ * @return The source with every resolvable quoted include expanded.
+ * @throw std::runtime_error If the include depth limit is exceeded or a file
+ * cannot be read.
+ */
+std::string resolveIncludes(const std::string& source, const std::string& baseDir, int depth)
+{
+	if (depth > 16)
+		throw std::runtime_error("shader include depth exceeded");
+
+	std::istringstream in(source);
+	std::ostringstream out;
+	std::string		   line;
+
+	while (std::getline(in, line)) {
+		const size_t first = line.find_first_not_of(" \t");
+		if (first != std::string::npos && line.compare(first, 9, "#include ") == 0) {
+			const size_t open  = line.find('"', first + 9);
+			const size_t close = open == std::string::npos ? std::string::npos
+														   : line.find('"', open + 1);
+			if (open != std::string::npos && close != std::string::npos) {
+				const std::string rel = line.substr(open + 1, close - open - 1);
+				std::string		  full = rel;
+				if (!rel.empty() && rel.front() != '/' && rel.front() != '\\')
+					full = baseDir + rel;
+				out << resolveIncludes(readFile(full), directoryOf(full), depth + 1);
+				continue;
+			}
+		}
+		out << line << '\n';
+	}
+	return out.str();
+}
 }  // namespace
 
 /**
@@ -151,7 +205,8 @@ bool Shader::loadFromSource(const std::string& v, const std::string& f)
 bool Shader::loadFromFile(const std::string& v, const std::string& f)
 {
 	try {
-		return loadFromSource(readFile(v), readFile(f));
+		return loadFromSource(resolveIncludes(readFile(v), directoryOf(v), 0),
+							  resolveIncludes(readFile(f), directoryOf(f), 0));
 	} catch (const std::exception& e) {
 		std::cerr << e.what() << "\n";
 		return false;
@@ -217,7 +272,8 @@ bool Shader::loadComputeFromSource(const std::string& computeSrc)
 bool Shader::loadComputeFromFile(const std::string& computePath)
 {
 	try {
-		return loadComputeFromSource(readFile(computePath));
+		return loadComputeFromSource(
+			resolveIncludes(readFile(computePath), directoryOf(computePath), 0));
 	} catch (const std::exception& e) {
 		std::cerr << e.what() << "\n";
 		return false;
