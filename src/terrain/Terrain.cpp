@@ -1,6 +1,5 @@
 #include <Terrain.hpp>
 #include <utils.h>
-#include <delaunator.hpp>
 #include <filesystem>
 #include <iostream>
 #include <string>
