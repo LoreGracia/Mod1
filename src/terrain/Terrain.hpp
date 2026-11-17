@@ -4,6 +4,8 @@
 
 #include <sstream>
 #include <string>
+#include <vector>
+#include <cstdint>
 
 #include <glm.hpp>
 #include <gtc/type_ptr.hpp>

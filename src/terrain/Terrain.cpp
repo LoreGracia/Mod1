@@ -1,11 +1,12 @@
 #include <Terrain.hpp>
-#include <algorithm>
+#include <utils.h>
 #include <delaunator.hpp>
 #include <filesystem>
 #include <iostream>
-#include <regex>
 #include <string>
-#include <utils.h>
+#include <regex>
+#include <algorithm>
+#include <cmath>
 
 const std::vector<float> Terrain::extractNumbers(const std::string& input)
 {
@@ -67,7 +68,7 @@ Terrain& Terrain::operator=(Terrain&& t) noexcept
 
 void Terrain::getNormals()
 {
-	// Normales acumuladas por vértice
+	normals.clear();
 	std::vector<glm::vec3> vertexNormals(vertices.size(), glm::vec3(0.f));
 
 	for (std::size_t i = 0; i < indices.size(); i += 3) {
@@ -109,53 +110,258 @@ void Terrain::getNormals()
 
 void Terrain::generateTerrain()
 {
-	vertices = points;
+    constexpr int resolution = 100;
+    const float h = size * 0.5f;
 
-	const float h = size * 0.5f;
+	const float gridSpacing = size / (resolution - 1);
+	// Controla el ancho de los montículos.
+	const float influenceScale = 0.5f;
 
-	// Basic plane corners: X & Z.
-	vertices.emplace_back(-h, 0.f, -h);
-	vertices.emplace_back(h, 0.f, -h);
-	vertices.emplace_back(h, 0.f, h);
-	vertices.emplace_back(-h, 0.f, h);
+	// Límites del radio de influencia.
+	const float minInfluenceRadius = gridSpacing * 0.5f;
+	const float maxInfluenceRadius = size * 0.3f;
 
-	// Delaunay works in 2D: we use X & Z.
-	std::vector<double> coords;
-	coords.reserve(vertices.size() * 2);
+	// Radio de influencia de cada punto.
+	std::vector<float> influenceRadii(points.size(), 0.f);
 
-	for (const auto& p : vertices) {
-		coords.push_back(p.x);
-		coords.push_back(p.z);
+	for (std::size_t i = 0; i < points.size(); ++i)
+	{
+		float nearestDistance = size;
+
+		for (std::size_t j = 0; j < points.size(); ++j)
+		{
+			if (i == j)
+				continue;
+
+			const float dx = points[i].x - points[j].x;
+			const float dz = points[i].z - points[j].z;
+
+			const float distance = std::sqrt(dx * dx + dz * dz);
+			nearestDistance = std::min(nearestDistance, distance);
+		}
+
+		influenceRadii[i] = std::clamp(
+			nearestDistance * influenceScale,
+			minInfluenceRadius,
+			maxInfluenceRadius
+		);
 	}
 
-	// Delaunay-cpp will simplify the calculation:
-	// What is delaunay: is a formula to calculate triangles from
-	// a range of points in a plane.
-	// How delaunay does it: it makes sure no point is inside the triangles
-	// by calculation a circular radio throught the three triangle corners.
-	delaunator::Delaunator triangulation(coords);
+	auto sampleHeight = [&](float x, float z) -> float
+{
+    float height = 0.f;
 
-	// Look into this, maybe this is just a copy of vertices
-	std::vector<float> positions;
-	positions.reserve(vertices.size() * 3);
+    // Distancia del vértice actual a cada lado del terreno.
+    const float left   = x + h;
+    const float right  = h - x;
+    const float near   = z + h;
+    const float far    = h - z;
 
-	for (const auto& p : vertices) {
-		positions.push_back(p.x);
-		positions.push_back(p.y);
-		positions.push_back(p.z);
-	}
+    // Smoothstep manual.
+    auto smoothStep = [](float edge0, float edge1, float value)
+    {
+        const float t = std::clamp(
+            (value - edge0) / (edge1 - edge0),
+            0.f,
+            1.f
+        );
 
-	// Apply delaunator result indices
-	// std::vector<uint32_t> indices;
-	indices.reserve(triangulation.triangles.size());
+        return t * t * (3.f - 2.f * t);
+    };
 
-	for (const auto index : triangulation.triangles)
-		indices.push_back(static_cast<uint32_t>(index));
+    // Calcular la influencia de cada punto.
+    for (std::size_t i = 0; i < points.size(); ++i)
+    {
+			const glm::vec3& point = points[i];
 
-	getNormals();
+			const float dx = x - point.x;
+			const float dz = z - point.z;
 
-	// Save terrain result
-	plane->upload(positions, normals, indices, GL_TRIANGLES);
+			const float distanceSquared = dx * dx + dz * dz;
+			const float radius = influenceRadii[i];
+
+			const float influence = std::exp(
+				-distanceSquared / (2.f * radius * radius)
+			);
+
+			// Distancia del centro del montículo a cada borde.
+			const float pointLeft  = point.x + h;
+			const float pointRight = h - point.x;
+			const float pointNear  = point.z + h;
+			const float pointFar   = h - point.z;
+
+			// Cada montículo adapta su transición al perímetro.
+			const float fadeLeft = smoothStep(
+				0.f, std::max(pointLeft, gridSpacing), left
+			);
+
+			const float fadeRight = smoothStep(
+				0.f, std::max(pointRight, gridSpacing), right
+			);
+
+			const float fadeNear = smoothStep(
+				0.f, std::max(pointNear, gridSpacing), near
+			);
+
+			const float fadeFar = smoothStep(
+				0.f, std::max(pointFar, gridSpacing), far
+			);
+
+			const float borderFade =
+				fadeLeft * fadeRight * fadeNear * fadeFar;
+
+			const float contribution =
+				point.y * influence * borderFade;
+
+			height = std::max(height, contribution);
+		}
+
+		return height;
+	};
+
+    // --------------------------------------------------
+    // 6. Crear la cuadrícula regular.
+    // --------------------------------------------------
+
+    for (int z = 0; z < resolution; ++z)
+    {
+        for (int x = 0; x < resolution; ++x)
+        {
+            const float worldX =
+                -h + size * static_cast<float>(x) /
+                (resolution - 1);
+
+            const float worldZ =
+                -h + size * static_cast<float>(z) /
+                (resolution - 1);
+
+            const float height = sampleHeight(worldX, worldZ);
+
+            vertices.emplace_back(worldX, height, worldZ);
+        }
+    }
+
+    // --------------------------------------------------
+    // 7. Construir los triángulos de la cuadrícula.
+    // --------------------------------------------------
+
+    for (int z = 0; z < resolution - 1; ++z)
+    {
+        for (int x = 0; x < resolution - 1; ++x)
+        {
+            const uint32_t a = z * resolution + x;
+            const uint32_t b = a + 1;
+            const uint32_t c = a + resolution;
+            const uint32_t d = c + 1;
+
+            indices.push_back(a);
+            indices.push_back(c);
+            indices.push_back(b);
+
+            indices.push_back(b);
+            indices.push_back(c);
+            indices.push_back(d);
+        }
+    }
+	
+	// // 7.5 
+	// // Suavizado geométrico de las alturas
+	// const int smoothIterations = 5;
+	// const float smoothStrength = 0.25f;
+
+	// std::vector<float> heights(vertices.size());
+	// std::vector<float> newHeights(vertices.size());
+	// std::vector<bool> fixed(vertices.size(), false);
+
+	// // Guardar las alturas actuales
+	// for (std::size_t i = 0; i < vertices.size(); ++i)
+	// 	heights[i] = vertices[i].y;
+
+	// // Mantener fijos los bordes
+	// for (int z = 0; z < resolution; ++z) {
+	// 	for (int x = 0; x < resolution; ++x) {
+	// 		if (x == 0 || z == 0 ||
+	// 			x == resolution - 1 || z == resolution - 1) {
+	// 			fixed[z * resolution + x] = true;
+	// 		}
+	// 	}
+	// }
+
+	// // Proteger las posiciones correspondientes a los puntos originales
+	// const float halfSize = size * 0.5f;
+
+	// for (const auto& point : points) {
+	// 	int x = static_cast<int>(std::round(
+	// 		(point.x + halfSize) / size * (resolution - 1)
+	// 	));
+
+	// 	int z = static_cast<int>(std::round(
+	// 		(point.z + halfSize) / size * (resolution - 1)
+	// 	));
+
+	// 	x = std::clamp(x, 0, resolution - 1);
+	// 	z = std::clamp(z, 0, resolution - 1);
+
+	// 	fixed[z * resolution + x] = true;
+	// }
+
+	// // Aplicar suavizado iterativo
+	// for (int iteration = 0; iteration < smoothIterations; ++iteration) {
+	// 	newHeights = heights;
+
+	// 	for (int z = 1; z < resolution - 1; ++z) {
+	// 		for (int x = 1; x < resolution - 1; ++x) {
+	// 			const int index = z * resolution + x;
+
+	// 			if (fixed[index])
+	// 				continue;
+
+	// 			const float average =
+	// 				heights[index - resolution] +
+	// 				heights[index + resolution] +
+	// 				heights[index - 1] +
+	// 				heights[index + 1];
+
+	// 			const float neighborAverage = average * 0.25f;
+
+	// 			newHeights[index] =
+	// 				heights[index] +
+	// 				smoothStrength * (neighborAverage - heights[index]);
+	// 		}
+	// 	}
+
+	// 	heights.swap(newHeights);
+	// }
+
+	// // Aplicar las alturas suavizadas a la geometría
+	// for (std::size_t i = 0; i < vertices.size(); ++i)
+	// 	vertices[i].y = heights[i];
+
+    // --------------------------------------------------
+    // 8. Calcular normales.
+    // --------------------------------------------------
+
+    getNormals();
+
+    // --------------------------------------------------
+    // 9. Preparar posiciones.
+    // --------------------------------------------------
+
+    std::vector<float> positions;
+    positions.reserve(vertices.size() * 3);
+
+    for (const auto& p : vertices)
+    {
+        positions.push_back(p.x);
+        positions.push_back(p.y);
+        positions.push_back(p.z);
+    }
+
+    // --------------------------------------------------
+    // 10. Subir geometría a OpenGL.
+    // --------------------------------------------------
+
+    plane->upload(positions, normals, indices, GL_TRIANGLES);
 }
 
 Terrain::Terrain(const char* arg) : Terrain(arg ? std::string(arg) : std::string()) {}
@@ -220,8 +426,8 @@ void Terrain::initHooks()
 
 		if (in.isMouseButtonDown(Mouse::Button::Right)) {
 			const float s = 0.02f;
-			cam.move(right * (-static_cast<float>(in.mouseDeltaX()) * s) +
-					 up * (static_cast<float>(in.mouseDeltaY()) * s));
+			cam.move(right * (static_cast<float>(in.mouseDeltaX()) * s) +
+					 up * (-static_cast<float>(in.mouseDeltaY()) * s));
 		}
 
 		if (in.isMouseButtonDown(Mouse::Button::Left)) {
