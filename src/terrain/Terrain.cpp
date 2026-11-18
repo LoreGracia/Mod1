@@ -114,7 +114,7 @@ void Terrain::generateTerrain()
 
 	const float gridSpacing = size / (resolution - 1);
 	// Controla el ancho de los montículos.
-	const float influenceScale = 0.5f;
+	const float influenceScale = 1.0f;
 
 	// Límites del radio de influencia.
 	const float minInfluenceRadius = gridSpacing * 0.5f;
@@ -146,77 +146,100 @@ void Terrain::generateTerrain()
 		);
 	}
 
-	auto sampleHeight = [&](float x, float z) -> float
+	const float blendFactor = 0.2f;
+
+auto smoothMax = [](float a, float b, float factor) -> float
 {
-    float height = 0.f;
+    const float maximum = std::max(a, b);
+    const float minimum = std::min(a, b);
 
-    // Distancia del vértice actual a cada lado del terreno.
-    const float left   = x + h;
-    const float right  = h - x;
-    const float near   = z + h;
-    const float far    = h - z;
+    const float k = factor * minimum;
 
-    // Smoothstep manual.
-    auto smoothStep = [](float edge0, float edge1, float value)
-    {
-        const float t = std::clamp(
-            (value - edge0) / (edge1 - edge0),
-            0.f,
-            1.f
+    if (k <= 1e-6f)
+        return maximum;
+
+    const float difference = maximum - minimum;
+
+    const float blend =
+        0.5f * (
+            std::sqrt(difference * difference + k * k)
+            - difference
         );
 
-        return t * t * (3.f - 2.f * t);
-    };
+    return maximum + blend;
+};
 
-    // Calcular la influencia de cada punto.
-    for (std::size_t i = 0; i < points.size(); ++i)
-    {
-			const glm::vec3& point = points[i];
+	auto sampleHeight = [&](float x, float z) -> float
+	{
+		float height = 0.f;
 
-			const float dx = x - point.x;
-			const float dz = z - point.z;
+		// Distancia del vértice actual a cada lado del terreno.
+		const float left   = x + h;
+		const float right  = h - x;
+		const float near   = z + h;
+		const float far    = h - z;
 
-			const float distanceSquared = dx * dx + dz * dz;
-			const float radius = influenceRadii[i];
-
-			const float influence = std::exp(
-				-distanceSquared / (2.f * radius * radius)
+		// Smoothstep manual.
+		auto smoothStep = [](float edge0, float edge1, float value)
+		{
+			const float t = std::clamp(
+				(value - edge0) / (edge1 - edge0),
+				0.f,
+				1.f
 			);
 
-			// Distancia del centro del montículo a cada borde.
-			const float pointLeft  = point.x + h;
-			const float pointRight = h - point.x;
-			const float pointNear  = point.z + h;
-			const float pointFar   = h - point.z;
+			return t * t * (3.f - 2.f * t);
+		};
 
-			// Cada montículo adapta su transición al perímetro.
-			const float fadeLeft = smoothStep(
-				0.f, std::max(pointLeft, gridSpacing), left
-			);
+		// Calcular la influencia de cada punto.
+		for (std::size_t i = 0; i < points.size(); ++i)
+		{
+				const glm::vec3& point = points[i];
 
-			const float fadeRight = smoothStep(
-				0.f, std::max(pointRight, gridSpacing), right
-			);
+				const float dx = x - point.x;
+				const float dz = z - point.z;
 
-			const float fadeNear = smoothStep(
-				0.f, std::max(pointNear, gridSpacing), near
-			);
+				const float distanceSquared = dx * dx + dz * dz;
+				const float radius = influenceRadii[i];
 
-			const float fadeFar = smoothStep(
-				0.f, std::max(pointFar, gridSpacing), far
-			);
+				const float influence = std::exp(
+					-distanceSquared / (2.f * radius * radius)
+				);
 
-			const float borderFade =
-				fadeLeft * fadeRight * fadeNear * fadeFar;
+				// Distancia del centro del montículo a cada borde.
+				const float pointLeft  = point.x + h;
+				const float pointRight = h - point.x;
+				const float pointNear  = point.z + h;
+				const float pointFar   = h - point.z;
 
-			const float contribution =
-				point.y * influence * borderFade;
+				// Cada montículo adapta su transición al perímetro.
+				const float fadeLeft = smoothStep(
+					0.f, std::max(pointLeft, gridSpacing), left
+				);
 
-			height = std::max(height, contribution);
-		}
+				const float fadeRight = smoothStep(
+					0.f, std::max(pointRight, gridSpacing), right
+				);
 
-		return height;
-	};
+				const float fadeNear = smoothStep(
+					0.f, std::max(pointNear, gridSpacing), near
+				);
+
+				const float fadeFar = smoothStep(
+					0.f, std::max(pointFar, gridSpacing), far
+				);
+
+				const float borderFade =
+					fadeLeft * fadeRight * fadeNear * fadeFar;
+
+				const float contribution =
+					point.y * influence * borderFade;
+
+				height = smoothMax(height, contribution, blendFactor);
+			}
+
+			return height;
+		};
 
     // --------------------------------------------------
     // 6. Crear la cuadrícula regular.
@@ -263,20 +286,32 @@ void Terrain::generateTerrain()
         }
     }
 	
-	// // 7.5 
-	// // Suavizado geométrico de las alturas
-	// const int smoothIterations = 5;
-	// const float smoothStrength = 0.25f;
+	// // --------------------------------------------------
+	// // 7.5 Suavizado geométrico de la superficie
+	// // --------------------------------------------------
+
+	// const int smoothIterations = 0.5;
+
+	// // Kernel gaussiano de 5 muestras.
+	// const float kernel[5] = {
+	// 	1.f / 16.f,
+	// 	4.f / 16.f,
+	// 	6.f / 16.f,
+	// 	4.f / 16.f,
+	// 	1.f / 16.f
+	// };
 
 	// std::vector<float> heights(vertices.size());
-	// std::vector<float> newHeights(vertices.size());
-	// std::vector<bool> fixed(vertices.size(), false);
+	// std::vector<float> temp(vertices.size());
 
-	// // Guardar las alturas actuales
+	// // Guardar las alturas originales.
 	// for (std::size_t i = 0; i < vertices.size(); ++i)
 	// 	heights[i] = vertices[i].y;
 
-	// // Mantener fijos los bordes
+	// // Proteger los bordes y las posiciones de los puntos originales.
+	// std::vector<bool> fixed(vertices.size(), false);
+
+	// // Fijar el perímetro.
 	// for (int z = 0; z < resolution; ++z) {
 	// 	for (int x = 0; x < resolution; ++x) {
 	// 		if (x == 0 || z == 0 ||
@@ -286,16 +321,14 @@ void Terrain::generateTerrain()
 	// 	}
 	// }
 
-	// // Proteger las posiciones correspondientes a los puntos originales
-	// const float halfSize = size * 0.5f;
-
+	// // Fijar el vértice de la cuadrícula más cercano a cada punto original.
 	// for (const auto& point : points) {
 	// 	int x = static_cast<int>(std::round(
-	// 		(point.x + halfSize) / size * (resolution - 1)
+	// 		(point.x + h) / size * (resolution - 1)
 	// 	));
 
 	// 	int z = static_cast<int>(std::round(
-	// 		(point.z + halfSize) / size * (resolution - 1)
+	// 		(point.z + h) / size * (resolution - 1)
 	// 	));
 
 	// 	x = std::clamp(x, 0, resolution - 1);
@@ -304,35 +337,53 @@ void Terrain::generateTerrain()
 	// 	fixed[z * resolution + x] = true;
 	// }
 
-	// // Aplicar suavizado iterativo
-	// for (int iteration = 0; iteration < smoothIterations; ++iteration) {
-	// 	newHeights = heights;
+	// // Aplicar suavizado gaussiano separable.
+	// for (int iteration = 0; iteration < smoothIterations; ++iteration)
+	// {
+	// 	temp = heights;
 
-	// 	for (int z = 1; z < resolution - 1; ++z) {
-	// 		for (int x = 1; x < resolution - 1; ++x) {
+	// 	// Primera pasada: eje X.
+	// 	for (int z = 2; z < resolution - 2; ++z) {
+	// 		for (int x = 2; x < resolution - 2; ++x) {
 	// 			const int index = z * resolution + x;
 
 	// 			if (fixed[index])
 	// 				continue;
 
-	// 			const float average =
-	// 				heights[index - resolution] +
-	// 				heights[index + resolution] +
-	// 				heights[index - 1] +
-	// 				heights[index + 1];
+	// 			float value = 0.f;
 
-	// 			const float neighborAverage = average * 0.25f;
+	// 			for (int k = -2; k <= 2; ++k) {
+	// 				value += heights[index + k] * kernel[k + 2];
+	// 			}
 
-	// 			newHeights[index] =
-	// 				heights[index] +
-	// 				smoothStrength * (neighborAverage - heights[index]);
+	// 			temp[index] = value;
 	// 		}
 	// 	}
 
-	// 	heights.swap(newHeights);
+	// 	// Segunda pasada: eje Z.
+	// 	std::vector<float> smoothed = temp;
+
+	// 	for (int z = 2; z < resolution - 2; ++z) {
+	// 		for (int x = 2; x < resolution - 2; ++x) {
+	// 			const int index = z * resolution + x;
+
+	// 			if (fixed[index])
+	// 				continue;
+
+	// 			float value = 0.f;
+
+	// 			for (int k = -2; k <= 2; ++k) {
+	// 				value += temp[index + k * resolution] * kernel[k + 2];
+	// 			}
+
+	// 			smoothed[index] = value;
+	// 		}
+	// 	}
+
+	// 	heights.swap(smoothed);
 	// }
 
-	// // Aplicar las alturas suavizadas a la geometría
+	// // Aplicar las alturas suavizadas.
 	// for (std::size_t i = 0; i < vertices.size(); ++i)
 	// 	vertices[i].y = heights[i];
 
@@ -425,8 +476,8 @@ void Terrain::initHooks()
 
 		if (in.isMouseButtonDown(Mouse::Button::Right)) {
 			const float s = 0.02f;
-			cam.move(right * (static_cast<float>(in.mouseDeltaX()) * s) +
-					 up * (-static_cast<float>(in.mouseDeltaY()) * s));
+			cam.move(right * (-static_cast<float>(in.mouseDeltaX()) * s) +
+					 up * (static_cast<float>(in.mouseDeltaY()) * s));
 		}
 
 		if (in.isMouseButtonDown(Mouse::Button::Left)) {
