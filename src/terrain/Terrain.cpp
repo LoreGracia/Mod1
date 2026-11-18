@@ -126,6 +126,7 @@ void Terrain::generateTerrain()
 	for (std::size_t i = 0; i < points.size(); ++i)
 	{
 		float nearestDistance = size;
+		float nearestNeighborHeight = points[i].y;
 
 		for (std::size_t j = 0; j < points.size(); ++j)
 		{
@@ -136,11 +137,28 @@ void Terrain::generateTerrain()
 			const float dz = points[i].z - points[j].z;
 
 			const float distance = std::sqrt(dx * dx + dz * dz);
-			nearestDistance = std::min(nearestDistance, distance);
+
+			if (distance < nearestDistance)
+			{
+				nearestDistance = distance;
+				nearestNeighborHeight = points[j].y;
+			}
 		}
 
+		// Radio base según la distancia al vecino más cercano.
+		const float baseRadius = nearestDistance * influenceScale;
+
+		// Ampliar el radio únicamente si el punto es más alto
+		// que su vecino más cercano.
+		const float heightDifference = std::max(
+			0.f,
+			points[i].y - nearestNeighborHeight
+		);
+
+		const float heightExpansion = heightDifference * 0.35f;
+
 		influenceRadii[i] = std::clamp(
-			nearestDistance * influenceScale,
+			baseRadius + heightExpansion,
 			minInfluenceRadius,
 			maxInfluenceRadius
 		);
