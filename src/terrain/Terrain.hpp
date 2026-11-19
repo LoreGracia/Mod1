@@ -32,6 +32,9 @@ class Terrain
             float rotY = 0.f;
             float rotX = 0.f;
             float size = 2;
+            float minHeight = 0.f;
+            float maxHeight = 0.f;
+            float originalPeak = 0.f;
 
             std::vector<glm::vec3> points;
             std::vector<uint32_t>  indices;
