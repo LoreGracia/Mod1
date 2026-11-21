@@ -85,6 +85,20 @@ public:
 	void setExternalParticleBuffer(GLuint bufferId, GLuint particleCount);
 
 	/**
+	 * @brief Binds the terrain height texture used by the CSG clipping pass.
+	 *
+	 * The texture is owned by the terrain and is not deleted by this class.
+	 * Passing a zero handle disables clipping and restores plain density
+	 * isosurface extraction. The footprint maps world XZ positions to UVs.
+	 *
+	 * @param texture OpenGL handle of the R32F height texture.
+	 * @param minXZ Minimum world-space XZ corner of the terrain footprint.
+	 * @param maxXZ Maximum world-space XZ corner of the terrain footprint.
+	 */
+	void setTerrainHeightTexture(GLuint texture, const glm::vec2& minXZ,
+								 const glm::vec2& maxXZ);
+
+	/**
 	 * @brief Executes the mesh generation pipeline on the GPU.
 	 *
 	 * Clears the density texture, dispatches the splatting compute shader,
@@ -139,13 +153,18 @@ public:
 
 	/**
 	 * @brief Sets the fluid energy used to attenuate the shader micro-waves.
-	 * @param energy Mean squared particle speed of the simulation, usually
-	 * queried from GPUSPH::waterEnergy().
+	 *
+	 * The hybrid CPU-drop pipeline leaves this value at zero, so the surface
+	 * remains flat while the tank fills.
+	 * @param energy Mean squared particle speed of the simulation.
 	 */
 	void setWaterEnergy(float energy) { m_waterEnergy = energy; }
 
 	/**
 	 * @brief Sets the world-space height of the settled water surface.
+	 *
+	 * Drives the artificial Marching Cubes fill field and the height shared
+	 * with the rain-drop culling shader.
 	 * @param level Height used by the vertex shader when flattening the mesh.
 	 */
 	void setWaterLevel(float level) { m_waterLevel = level; }
@@ -173,6 +192,7 @@ public:
 	/**
 	 * @brief Releases all OpenGL resources.
 	 * @note Idempotent. Called from the destructor; can be called manually if needed.
+	 * @note The terrain height texture is externally owned and is only unbound.
 	 */
 	void release();
 
@@ -189,6 +209,10 @@ private:
 	Shader m_splatShader;	 ///< density_splat.comp
 	Shader m_computeShader;	 ///< marching_cubes.comp
 	Shader m_meshShader;	 ///< meshVertex + meshFrag
+
+	GLuint	   m_terrainHeightTexture = 0;	///< External R32F height texture (not owned).
+	glm::vec2  m_terrainMinXZ{0.f};			///< Minimum XZ corner of the terrain footprint.
+	glm::vec2  m_terrainMaxXZ{1.f};			///< Maximum XZ corner of the terrain footprint.
 
 	glm::vec3  m_boundsMin{0.f};		///< Minimum world-space bound.
 	glm::vec3  m_boundsMax{1.f};		///< Maximum world-space bound.

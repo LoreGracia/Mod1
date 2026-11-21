@@ -25,13 +25,43 @@ uniform vec3 uFoamColor;    ///< Base color of the procedural foam.
 uniform vec3 uBoundsMin;    ///< Minimum bounds of the water volume.
 uniform vec3 uBoundsMax;    ///< Maximum bounds of the water volume.
 uniform float uSurfaceY;    ///< World-space height of the authoritative water surface.
+uniform sampler2D uTerrainHeight; ///< R32F heightfield sampled in world-space XZ.
+uniform vec2 uTerrainMinXZ;      ///< Minimum corner of the terrain footprint in world XZ.
+uniform vec2 uTerrainMaxXZ;      ///< Maximum corner of the terrain footprint in world XZ.
+uniform int  uUseTerrainHeight;  ///< 1 when the terrain height texture is bound, 0 otherwise.
 
 out vec4 FragColor;
+
+/**
+ * @brief Samples the terrain elevation at a world-space XZ position.
+ *
+ * Coordinates outside the terrain footprint are clamped to the edge texels.
+ * When no height texture is bound, a very low sentinel value disables the
+ * terrain clip so the volume renders unmodified.
+ *
+ * @param xz World-space XZ position of the fragment.
+ * @return Terrain height in world units, or a low sentinel when unavailable.
+ */
+float terrainHeight(vec2 xz) {
+	if (uUseTerrainHeight == 0)
+		return -1000.0;
+
+	vec2 extent = max(uTerrainMaxXZ - uTerrainMinXZ, vec2(1e-4));
+	vec2 uv		= clamp((xz - uTerrainMinXZ) / extent, 0.0, 1.0);
+	return texture(uTerrainHeight, uv).r;
+}
 
 /**
  * @brief Main fragment shader execution.
  */
 void main() {
+	/**
+	 * @brief Discards fragments that lie inside the terrain solid.
+	 */
+	float ground = terrainHeight(vWorldPos.xz);
+	if (vWorldPos.y < ground - 0.01)
+		discard;
+
 	vec3 V = normalize(uCameraPos - vWorldPos);
 
 	// Screen-space derivatives provide a flat normal per cube face.

@@ -1,4 +1,8 @@
+#ifndef GLFW_INCLUDE_NONE
+#define GLFW_INCLUDE_NONE
+#endif
 #include <Terrain.hpp>
+#include <GLFW/glfw3.h>
 #include <utils.h>
 #include <filesystem>
 #include <iostream>
@@ -83,19 +87,21 @@ Terrain& Terrain::operator=(Terrain&& t) noexcept
 	if (this == &t)
 		return *this;
 
-	cam		 = std::move(t.cam);
-	renderer = std::move(t.renderer);
-
 	shader = std::move(t.shader);
 	plane  = std::move(t.plane);
 
-	rotY = t.rotY;
-	rotX = t.rotX;
+	m_heightTexture = t.m_heightTexture;
+	t.m_heightTexture = 0;
 
-	cfg = std::move(t.cfg);
+	size		 = t.size;
+	m_minHeight	 = t.m_minHeight;
+	m_maxHeight	 = t.m_maxHeight;
+	originalPeak = t.originalPeak;
 
-	size = t.size;
-	initHooks();
+	points	 = std::move(t.points);
+	indices	 = std::move(t.indices);
+	vertices = std::move(t.vertices);
+	normals	 = std::move(t.normals);
 	return *this;
 }
 
@@ -144,6 +150,7 @@ void Terrain::getNormals()
 void Terrain::generateTerrain()
 {
     constexpr int resolution = 128;
+    m_resolution = resolution;
     const float h = size * 0.5f;
 
     const float gridSpacing = size / (resolution - 1);
@@ -337,11 +344,11 @@ void Terrain::generateTerrain()
     }
 
     // 6. min/max para el shader
-    minHeight = vertices.front().y;
-    maxHeight = vertices.front().y;
+    m_minHeight = vertices.front().y;
+    m_maxHeight = vertices.front().y;
     for (const auto& v : vertices) {
-        minHeight = std::min(minHeight, v.y);
-        maxHeight = std::max(maxHeight, v.y);
+        m_minHeight = std::min(m_minHeight, v.y);
+        m_maxHeight = std::max(m_maxHeight, v.y);
     }
 
     // 7. Subir a GPU
@@ -354,6 +361,35 @@ void Terrain::generateTerrain()
     }
 
     plane->upload(positions, normals, indices, GL_TRIANGLES);
+
+    /**
+     * @brief Publishes the generated heightfield as an R32F texture.
+     *
+     * Texel (x, z) stores the same elevation as terrain vertex (x, z), so the
+     * SPH collision pass and the water shaders sample the exact same surface
+     * that is rendered by the terrain mesh. Linear filtering smooths the
+     * height between vertices and clamp-to-edge keeps the border stable.
+     */
+    std::vector<float> heightData(static_cast<std::size_t>(resolution) *
+                                  static_cast<std::size_t>(resolution));
+    for (int z = 0; z < resolution; ++z) {
+        for (int x = 0; x < resolution; ++x) {
+            heightData[static_cast<std::size_t>(z) * resolution + x] =
+                vertices[static_cast<std::size_t>(z) * resolution + x].y;
+        }
+    }
+
+    if (m_heightTexture)
+        glDeleteTextures(1, &m_heightTexture);
+    glGenTextures(1, &m_heightTexture);
+    glBindTexture(GL_TEXTURE_2D, m_heightTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, resolution, resolution, 0,
+                 GL_RED, GL_FLOAT, heightData.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 Terrain::Terrain(const char* arg) : Terrain(arg ? std::string(arg) : std::string()) {}
@@ -363,151 +399,95 @@ Terrain::Terrain(const std::string mapath)
 	if (mapath.empty())
 		throw std::runtime_error("missing path");
 	parse(mapath);
-	cfg.title = std::filesystem::path(mapath).filename().string();
-	;
-	cfg.width  = 1000;
-	cfg.height = 700;
-	initEnv();
-
-	initHooks();
-
-	return;
 }
 
-void Terrain::addWindow(WWindow::Config& newcfg)
+/**
+ * @brief Creates the GPU resources of the terrain.
+ *
+ * Must be called once a valid OpenGL context is current. The shader, the mesh
+ * and the shared height texture are built from the parsed heightfield.
+ */
+void Terrain::init()
 {
-	cfg.title		 = newcfg.title;
-	cfg.width		 = newcfg.width;
-	cfg.height		 = newcfg.height;
-	cfg.x			 = newcfg.x;
-	cfg.y			 = newcfg.y;
-	cfg.shareContext = newcfg.shareContext;
-	cfg.glMajor		 = newcfg.glMajor;
-	cfg.glMinor		 = newcfg.glMinor;
-	cfg.coreProfile	 = newcfg.coreProfile;
-	cfg.resizable	 = newcfg.resizable;
-	cfg.visible		 = newcfg.visible;
-	cfg.decorated	 = newcfg.decorated;
-	cfg.vsync		 = newcfg.vsync;
-	cfg.samples		 = newcfg.samples;
+	shader = std::make_shared<Shader>();
+	if (!shader->loadFromFile("./src/terrain/shader/meshVertex.glsl",
+							  "./src/terrain/shader/meshFrag.frag")) {
+		std::fprintf(stderr, "shader failed\n");
+		return;
+	}
+
+	plane = std::make_shared<Mesh>();
+	generateTerrain();
 }
 
-void Terrain::initHooks()
+/**
+ * @brief Samples the generated heightfield at a world-space XZ position.
+ *
+ * Bilinear interpolation matches the R32F texture sampled by the water
+ * shaders. Coordinates outside the footprint clamp to the edge texels.
+ *
+ * @param xz World-space X and Z coordinates.
+ * @return Interpolated terrain elevation in world units.
+ */
+float Terrain::heightAt(glm::vec2 xz) const
 {
-	env.setUpdate([&](WWindow& w, float dt) {
-		Input& in = w.input();
-		if (in.isKeyPressed(Key::Code::Escape))
-			w.requestClose();
+	if (vertices.empty() || m_resolution < 2)
+		return m_minHeight;
 
-		// Cámara
-		float	  speed = 3.f * dt;
-		glm::vec3 fwd	= cam.forward();
-		glm::vec3 right = cam.right();
-		glm::vec3 up	= cam.up();
-		glm::vec3 move{0.f};
-		if (in.isKeyDown(Key::Code::W))
-			move += fwd;
-		if (in.isKeyDown(Key::Code::S))
-			move -= fwd;
-		if (in.isKeyDown(Key::Code::D))
-			move += right;
-		if (in.isKeyDown(Key::Code::A))
-			move -= right;
-		if (glm::length(move) > 1e-6f)
-			cam.move(glm::normalize(move) * speed);
+	const glm::vec2 lo = footprintMin();
+	const glm::vec2 hi = footprintMax();
+	const glm::vec2 extent = glm::max(hi - lo, glm::vec2(1e-4f));
+	const glm::vec2 uv = glm::clamp((xz - lo) / extent, 0.0f, 1.0f);
 
-		if (in.isMouseButtonDown(Mouse::Button::Right)) {
-			const float s = 0.02f;
-			cam.move(right * (-static_cast<float>(in.mouseDeltaX()) * s) +
-					 up * (static_cast<float>(in.mouseDeltaY()) * s));
-		}
+	const float gx = uv.x * static_cast<float>(m_resolution - 1);
+	const float gz = uv.y * static_cast<float>(m_resolution - 1);
+	const int x0 = std::min(static_cast<int>(gx), m_resolution - 2);
+	const int z0 = std::min(static_cast<int>(gz), m_resolution - 2);
+	const float fx = glm::clamp(gx - static_cast<float>(x0), 0.0f, 1.0f);
+	const float fz = glm::clamp(gz - static_cast<float>(z0), 0.0f, 1.0f);
 
-		if (in.isMouseButtonDown(Mouse::Button::Left)) {
-			const float sens = 0.01f;
-			rotY += static_cast<float>(in.mouseDeltaX()) * sens;
-			rotX += static_cast<float>(in.mouseDeltaY()) * sens;
+	const auto sample = [&](int x, int z) {
+		return vertices[static_cast<std::size_t>(z) * static_cast<std::size_t>(m_resolution) +
+						static_cast<std::size_t>(x)].y;
+	};
 
-			const float lim = glm::radians(89.f);
-			if (rotX > lim)
-				rotX = lim;
-			if (rotX < -lim)
-				rotX = -lim;
-		}
-
-		if (in.scrollDelta() != 0.0)
-			cam.orbit(0.f, 0.f, -static_cast<float>(in.scrollDelta()) * 0.5f);
-
-		// Reset de rotación
-		if (in.isKeyPressed(Key::Code::R)) {
-			rotX = 0.f;
-			rotY = 0.f;
-		}
-		if (in.isKeyPressed(Key::Code::F)) {
-			wireframe = !wireframe;
-		}
-	});
+	return glm::mix(glm::mix(sample(x0, z0), sample(x0 + 1, z0), fx),
+					glm::mix(sample(x0, z0 + 1), sample(x0 + 1, z0 + 1), fx), fz);
 }
 
-void Terrain::initEnv()
+/**
+ * @brief Draws the terrain with an identity model matrix.
+ *
+ * Keeping the model at the identity guarantees that the terrain, the CPU rain
+ * drops and the Marching Cubes mesh share one global coordinate system.
+ *
+ * @param viewProj Combined view-projection matrix of the active camera.
+ */
+void Terrain::render(const glm::mat4& viewProj)
 {
-	env.setInit([&](WWindow& w) {
-		shader = std::make_shared<Shader>();
-		if (!shader->loadFromFile("./src/terrain/shader/meshVertex.glsl",
-								  "./src/terrain/shader/meshFrag.frag")) {
-			std::fprintf(stderr, "shader failed\n");
-			return;
-		}
+	shader->use();
+	shader->setMat4("uViewProj", viewProj);
+	shader->setMat4("uModel", glm::mat4(1.0f));
+	shader->setFloat("uMinHeight", m_minHeight);
+	shader->setFloat("uMaxHeight", m_maxHeight);
+	shader->setFloat("uTime", static_cast<float>(glfwGetTime()));
+	shader->setFloat("uMapHeight", originalPeak);
 
-		plane = std::make_shared<Mesh>();
-		generateTerrain();
-
-		cam = Camera({3.f, 3.f, 4.f}, {0.f, 0.f, 0.f});
-
-		renderer.depthTest(true);
-		renderer.cullFace(false);
-		renderer.blend(false);
-
-		(void)w;
-	});
+	plane->draw();
 }
 
-
-void Terrain::render()
+/**
+ * @brief Releases the OpenGL height texture owned by this instance.
+ */
+void Terrain::release()
 {
-	env.addWindow(cfg);
-	env.setRender([&](WWindow& w) {
-		int rw, rh;
-		if (w.consumeResize(rw, rh))
-			renderer.setViewport(rw, rh);
-		else
-			renderer.setViewport(w.framebufferWidth(), w.framebufferHeight());
+	if (m_heightTexture) {
+		glDeleteTextures(1, &m_heightTexture);
+		m_heightTexture = 0;
+	}
+}
 
-		renderer.setClearColor(0.05f, 0.05f, 0.10f, 1.f);
-		renderer.clear(true, true, false);
-
-		glm::mat4 model = glm::mat4(1.f);
-		model			= glm::rotate(model, rotY, glm::vec3(0.f, 1.f, 0.f));
-		model			= glm::rotate(model, rotX, glm::vec3(1.f, 0.f, 0.f));
-
-		glm::mat4 vp  = cam.projection(w.aspect()) * cam.view();
-		glm::mat4 mvp = vp * model;
-
-        shader->use();
-        shader->setMat4("uViewProj", mvp);
-        shader->setMat4("uModel", model);
-        shader->setFloat("uMinHeight", minHeight);
-        shader->setFloat("uMaxHeight", maxHeight);
-        shader->setFloat("uTime", static_cast<float>(glfwGetTime()));
-        shader->setFloat("uMapHeight", originalPeak);   // NUEVO: pico real en escala de points
-                glPolygonMode(
-                    GL_FRONT_AND_BACK,
-                    wireframe ? GL_LINE : GL_FILL
-                );
-
-		plane->draw();
-
-		glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-	});
-
-	env.run();
+Terrain::~Terrain()
+{
+	release();
 }

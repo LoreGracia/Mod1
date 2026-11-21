@@ -29,6 +29,11 @@ uniform float uDensityMax;  ///< Maximum density for color/size mapping.
 // by the GPU density pass.
 uniform float uHideBelowY;  ///< Height threshold to hide settled particles.
 uniform float uSplashSpeed; ///< If |velocity| >= this, the particle is splashing and remains visible.
+/**
+ * @brief Authoritative water surface supplied by the artificial fill field.
+ *
+ * Drops below this height are inside the tank body and are clipped.
+ */
 uniform float uSurfaceY;    ///< Authoritative water surface: drops below it are inside the body.
 
 out float vDensity; ///< Passes density to the fragment shader.

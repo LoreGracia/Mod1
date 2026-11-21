@@ -35,6 +35,9 @@ struct GPUParticle
 	glm::vec4 velAge;	  ///< xyz = velocity, w = age
 	glm::vec4 flags;	  ///< x = rainDrop flag (1 = rain drop), y,z,w = unused
 };
+
+/** @brief Texture unit reserved for the shared terrain height texture. */
+constexpr int TERRAIN_HEIGHT_TEXTURE_UNIT = 3;
 }  // namespace
 
 /** @brief Default constructor. */
@@ -240,12 +243,33 @@ void GPUMarchingCubes::setExternalParticleBuffer(GLuint bufferId, GLuint particl
 }
 
 /**
+ * @brief Stores the external height texture and its world-space XZ footprint.
+ *
+ * The texture handle is only referenced; ownership stays with the terrain.
+ * A zero handle disables the CSG terrain clipping in the compute shader.
+ *
+ * @param texture OpenGL handle of the R32F height texture.
+ * @param minXZ Minimum world-space XZ corner of the terrain footprint.
+ * @param maxXZ Maximum world-space XZ corner of the terrain footprint.
+ */
+void GPUMarchingCubes::setTerrainHeightTexture(GLuint texture, const glm::vec2& minXZ,
+											  const glm::vec2& maxXZ)
+{
+	m_terrainHeightTexture = texture;
+	m_terrainMinXZ		   = minXZ;
+	m_terrainMaxXZ		   = maxXZ;
+}
+
+/**
  * @brief Executes the full mesh generation pipeline on the GPU.
  *
  * 1. Clears the 3D density texture (essential to prevent accumulation).
  * 2. Runs the density splatting compute shader (particles -> texture).
  * 3. Runs the Marching Cubes compute shader (texture -> vertex SSBO).
  * Inserts the necessary memory barriers between passes.
+ *
+ * @note When a terrain height texture is bound, the marching field is the CSG
+ * intersection of the water density and the space above the heightfield.
  */
 void GPUMarchingCubes::generateMesh()
 {
@@ -296,6 +320,7 @@ void GPUMarchingCubes::generateMesh()
 	m_splatShader.setFloat("uFallSpeedCutoff", m_fallSpeedCutoff);
 	m_splatShader.setFloat("uSplatHeight", m_splatHeight);
 	m_splatShader.setFloat("uSplatMaxHeight", m_splatMaxHeight);
+	m_splatShader.setFloat("uSurfaceY", m_waterLevel);
 	m_splatShader.setFloat("uSettleSpeed", m_settleSpeed);
 	m_splatShader.setFloat("uSplatYScale", m_splatYScale);
 	m_splatShader.setInt("uParticleCount", static_cast<int>(particleCount));
@@ -318,9 +343,23 @@ void GPUMarchingCubes::generateMesh()
 	m_computeShader.setVec3("uGridMax", m_boundsMax);
 	m_computeShader.setIVec3("uGridSize", m_gridSize);
 	m_computeShader.setFloat("uIsoLevel", m_isoLevel);
+	m_computeShader.setFloat("uSurfaceY", m_waterLevel);
 	m_computeShader.setFloat("uDensityScale", m_densityScale);
 	// Read-time six-neighbour blur that smooths per-particle density bumps.
 	m_computeShader.setFloat("uDensityBlur", 2.0f);
+
+	const bool useTerrainHeight = (m_terrainHeightTexture != 0);
+	m_computeShader.setInt("uUseTerrainHeight", useTerrainHeight ? 1 : 0);
+	m_computeShader.setInt("uTerrainHeight", TERRAIN_HEIGHT_TEXTURE_UNIT);
+	glUniform2f(glGetUniformLocation(m_computeShader.id(), "uTerrainMinXZ"),
+				m_terrainMinXZ.x, m_terrainMinXZ.y);
+	glUniform2f(glGetUniformLocation(m_computeShader.id(), "uTerrainMaxXZ"),
+				m_terrainMaxXZ.x, m_terrainMaxXZ.y);
+	if (useTerrainHeight) {
+		glActiveTexture(GL_TEXTURE0 + TERRAIN_HEIGHT_TEXTURE_UNIT);
+		glBindTexture(GL_TEXTURE_2D, m_terrainHeightTexture);
+		glActiveTexture(GL_TEXTURE0);
+	}
 
 	m_computeShader.dispatchForGrid(static_cast<GLuint>(m_gridSize.x),
 									static_cast<GLuint>(m_gridSize.y),
@@ -400,6 +439,9 @@ void GPUMarchingCubes::setBounds(const glm::vec3& lo, const glm::vec3& hi)
 
 /**
  * @brief Releases all allocated OpenGL resources.
+ *
+ * The external terrain height texture is only unbound and is never deleted
+ * here because it belongs to the terrain component.
  */
 void GPUMarchingCubes::release()
 {
@@ -428,4 +470,8 @@ void GPUMarchingCubes::release()
 	m_maxVertices	= 0;
 	m_particleCount = 0;
 	m_initialized	= false;
+
+	m_terrainHeightTexture = 0;
+	m_terrainMinXZ		   = glm::vec2(0.f);
+	m_terrainMaxXZ		   = glm::vec2(1.f);
 }

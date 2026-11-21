@@ -121,6 +121,22 @@ public:
 	size_t emitRainParticles(size_t count);
 
 	/**
+	 * @brief Appends a batch of rain particles using explicit spawn bounds.
+	 *
+	 * Unlike emitRainParticles(), this method takes the container bounds from
+	 * the caller so the caller can drive filling from its own configuration.
+	 * New particles keep the rain-drop flag until the integration pass settles
+	 * them on the terrain, and the active count grows accordingly.
+	 *
+	 * @param count Number of particles to append, clamped to the free capacity.
+	 * @param boundsMin Minimum corner of the spawn volume.
+	 * @param boundsMax Maximum corner of the spawn volume.
+	 * @return Number of particles actually appended.
+	 */
+	size_t addParticles(size_t count, const glm::vec3& boundsMin,
+						const glm::vec3& boundsMax);
+
+	/**
 	 * @brief Runs one frame of the SPH pipeline on the GPU.
 	 *
 	 * Each substep dispatches the full chain: Clear & Predict, the six
@@ -173,6 +189,20 @@ public:
 	 * @param on True to enable the rain behavior, false to disable it.
 	 */
 	void setRainMode(bool on) { m_params.rainMode = on; }
+
+	/**
+	 * @brief Binds the terrain height texture used by the integration pass.
+	 *
+	 * The texture is owned by the terrain and is not deleted by this class.
+	 * Passing a zero handle restores the flat container bottom as the ground.
+	 * The footprint maps world-space XZ coordinates into texture UVs.
+	 *
+	 * @param texture OpenGL handle of the R32F height texture.
+	 * @param minXZ Minimum world-space XZ corner of the terrain footprint.
+	 * @param maxXZ Maximum world-space XZ corner of the terrain footprint.
+	 */
+	void setTerrainHeightTexture(GLuint texture, const glm::vec2& minXZ,
+								 const glm::vec2& maxXZ);
 
 	/**
 	 * @brief Gets the particle SSBO handle (GPUParticle layout, std430).
@@ -259,6 +289,7 @@ public:
 	/**
 	 * @brief Releases all OpenGL resources.
 	 * @note Idempotent. Called from the destructor; can be called manually.
+	 * @note The terrain height texture is externally owned and is only unbound.
 	 */
 	void release();
 
@@ -344,6 +375,10 @@ private:
 	GLuint m_xsphVelSSBO	= 0;  ///< vec4[] XSPH velocity delta (binding 10).
 	GLuint m_energySSBO		= 0;  ///< uint[1] fixed-point kinetic-energy accumulator (binding 11).
 	GLuint m_rainVAO		= 0;  ///< VAO mapping the particle SSBO to point attributes.
+
+	GLuint	   m_terrainHeightTexture = 0;	///< External R32F height texture (not owned).
+	glm::vec2  m_terrainMinXZ{0.f};			///< Minimum XZ corner of the terrain footprint.
+	glm::vec2  m_terrainMaxXZ{1.f};			///< Maximum XZ corner of the terrain footprint.
 
 	Shader m_clearPredictShader;  ///< sph_clear_predict.comp.
 	Shader m_hashShader;		  ///< sph_hash.comp (phases multiplexed via uPhase).

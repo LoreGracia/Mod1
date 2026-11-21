@@ -50,6 +50,9 @@ constexpr int FORCES_WORKGROUP_SIZE = 64;
 /** @brief Threads per workgroup used by sph_integrate.comp. */
 constexpr int INTEGRATE_WORKGROUP_SIZE = 64;
 
+/** @brief Texture unit reserved for the shared terrain height texture. */
+constexpr int TERRAIN_HEIGHT_TEXTURE_UNIT = 4;
+
 /**
  * @brief Computes the number of workgroups needed to cover n items.
  * @param n Number of items.
@@ -323,6 +326,53 @@ size_t GPUSPH::emitRainParticles(size_t count)
 }
 
 /**
+ * @brief Appends a batch of rain particles using explicit spawn bounds.
+ *
+ * The new records are written after the simulated prefix, preserving the GPU
+ * state of existing particles. Spawn bounds are supplied by the caller so the
+ * emitter stays in sync with the container used by the rest of the pipeline.
+ *
+ * @param count Number of particles to append, clamped to the free capacity.
+ * @param boundsMin Minimum corner of the spawn volume.
+ * @param boundsMax Maximum corner of the spawn volume.
+ * @return Number of particles actually appended.
+ */
+size_t GPUSPH::addParticles(size_t count, const glm::vec3& boundsMin,
+							const glm::vec3& boundsMax)
+{
+	if (!m_initialized || count == 0)
+		return 0;
+
+	const size_t freeSlots = m_maxParticles - m_particleCount;
+	count				   = std::min(count, freeSlots);
+	if (count == 0)
+		return 0;
+
+	const float spanX = std::max(boundsMax.x - boundsMin.x - 0.1f, 0.01f);
+	const float spanZ = std::max(boundsMax.z - boundsMin.z - 0.1f, 0.01f);
+
+	std::vector<GPUParticle> staging(count);
+	for (size_t i = 0; i < count; ++i) {
+		const float x	= boundsMin.x + 0.05f + nextUnit(m_emitSeed) * spanX;
+		const float z	= boundsMin.z + 0.05f + nextUnit(m_emitSeed) * spanZ;
+		const float y	= boundsMax.y - 0.1f;
+		const float vy	= -5.0f;
+		staging[i].posWeight = glm::vec4(x, y, z, 0.0f);
+		staging[i].velAge	 = glm::vec4(0.0f, vy, 0.0f, 0.0f);
+		staging[i].flags	 = glm::vec4(1.0f, 0.0f, 0.0f, 0.0f);
+	}
+
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_particleSSBO);
+	glBufferSubData(GL_SHADER_STORAGE_BUFFER,
+					static_cast<GLintptr>(m_particleCount * sizeof(GPUParticle)),
+					static_cast<GLsizeiptr>(count * sizeof(GPUParticle)), staging.data());
+	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+	m_particleCount += count;
+	return count;
+}
+
+/**
  * @brief Dispatches Clear & Predict and the six counting-sort phases.
  *
  * All SSBOs are bound to their fixed binding points and one memory barrier
@@ -462,12 +512,30 @@ void GPUSPH::computeForces()
 }
 
 /**
+ * @brief Stores the external height texture and its world-space XZ footprint.
+ *
+ * The texture handle is only referenced; ownership stays with the terrain.
+ * A zero handle disables heightfield collisions and restores the flat plane.
+ *
+ * @param texture OpenGL handle of the R32F height texture.
+ * @param minXZ Minimum world-space XZ corner of the terrain footprint.
+ * @param maxXZ Maximum world-space XZ corner of the terrain footprint.
+ */
+void GPUSPH::setTerrainHeightTexture(GLuint texture, const glm::vec2& minXZ,
+									 const glm::vec2& maxXZ)
+{
+	m_terrainHeightTexture = texture;
+	m_terrainMinXZ		   = minXZ;
+	m_terrainMaxXZ		   = maxXZ;
+}
+
+/**
  * @brief Dispatches the Integration pass (sph_integrate.comp).
  *
  * One invocation per particle: applies the force and the XSPH delta to the
  * velocity (with damping and the speed clamp), moves the particle, resolves
- * the ground/wall/ceiling collisions, settles rain drops that touch the
- * ground and classifies splatWeight on the post-move state.
+ * the terrain/wall/ceiling collisions, settles rain drops that touch the
+ * heightfield and classifies splatWeight on the post-move state.
  *
  * @param subDt Substep delta time applied to the integration.
  */
@@ -491,8 +559,24 @@ void GPUSPH::integrateParticles(float subDt)
 	m_integrateShader.setFloat("uAirY", m_params.boundsMax.y - m_params.rainAirBand);
 	m_integrateShader.setFloat("uRainSettleFraction", m_params.rainSettleFraction);
 	m_integrateShader.setInt("uSeed", static_cast<int>(m_recycleSeed));
+
+	const bool useTerrainHeight = (m_terrainHeightTexture != 0);
+	m_integrateShader.setInt("uUseTerrainHeight", useTerrainHeight ? 1 : 0);
+	m_integrateShader.setInt("uTerrainHeight", TERRAIN_HEIGHT_TEXTURE_UNIT);
+	glUniform2f(glGetUniformLocation(m_integrateShader.id(), "uTerrainMinXZ"),
+				m_terrainMinXZ.x, m_terrainMinXZ.y);
+	glUniform2f(glGetUniformLocation(m_integrateShader.id(), "uTerrainMaxXZ"),
+				m_terrainMaxXZ.x, m_terrainMaxXZ.y);
+	if (useTerrainHeight) {
+		glActiveTexture(GL_TEXTURE0 + TERRAIN_HEIGHT_TEXTURE_UNIT);
+		glBindTexture(GL_TEXTURE_2D, m_terrainHeightTexture);
+	}
+
 	m_integrateShader.dispatch(groupsFor(m_particleCount, INTEGRATE_WORKGROUP_SIZE), 1, 1);
 	glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+	if (useTerrainHeight)
+		glActiveTexture(GL_TEXTURE0);
 }
 
 /**
@@ -795,7 +879,8 @@ void GPUSPH::debugReadbackParticles(std::vector<glm::vec4>& outPosWeight,
  * @brief Releases all OpenGL resources.
  *
  * Deletes every SSBO owned by the pipeline and the rain-drop VAO. Shader
- * programs are released by their own destructors.
+ * programs are released by their own destructors. The external terrain height
+ * texture is only unbound and is never deleted here.
  */
 void GPUSPH::release()
 {
@@ -821,6 +906,10 @@ void GPUSPH::release()
 	m_blockSumsSSBO	 = 0;
 	m_xsphVelSSBO	 = 0;
 	m_energySSBO	 = 0;
+
+	m_terrainHeightTexture = 0;
+	m_terrainMinXZ		   = glm::vec2(0.f);
+	m_terrainMaxXZ		   = glm::vec2(1.f);
 
 	m_waterEnergy	 = 0.f;
 	m_initialized	= false;

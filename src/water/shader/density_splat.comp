@@ -52,6 +52,7 @@ uniform float uFallSpeedCutoff;   ///< Falling drops exceeding this speed do not
 // ── Phase 3.7: strict settled water filter + flattening ──────────────
 uniform float uSplatHeight;       ///< Vertical band (above uGridMin.y) where density injection is allowed.
 uniform float uSplatMaxHeight;    ///< Absolute ceiling: above this height, density is NEVER injected.
+uniform float uSurfaceY;          ///< Visual water surface height used to cap density injection.
 uniform float uSettleSpeed;       ///< If |velocity.y| <= this, the particle is considered settled.
 uniform float uSplatYScale;       ///< Vertical kernel compression (>1): metaballs merge horizontally to form a flat sheet.
 
@@ -82,16 +83,30 @@ void main() {
 	float weight    = posWeight.w;
 	if (weight <= 0.0) return;
 
+	float vy = particles[i].velAge.y;
+
+	/**
+	 * @brief Rejects rain-flagged particles while they are still falling.
+	 *
+	 * The integration pass clears the flag when the drop lands. Until then the
+	 * particle is rendered as a point and must never feed the metaball volume.
+	 */
+	if (particles[i].flags.x > 0.5 && vy < 0.0) return;
+
 	// GPU Filter: a fast-falling drop (velocity.y < uFallSpeedCutoff) does not 
 	// inject density into the volume. Thus, the puddle only forms from settled water.
-	float vy = particles[i].velAge.y;
 	if (vy < uFallSpeedCutoff) return;
+
+	/**
+	 * @brief Rejects splats above the visual water surface.
+	 */
+	vec3 p = posWeight.xyz;
+	if (p.y > uSurfaceY + 0.5) return;
 
 	// ── Phase 3.7: only settled water at the bottom ─────────────────
 	// Splatting is allowed if the particle is in the low band OR almost still,
 	// but ALWAYS below the hard ceiling. Airborne drops are excluded and 
 	// continue to be drawn as GL_POINTS.
-	vec3  p     = posWeight.xyz;
 	float relY  = p.y - uGridMin.y;
 	bool  low   = relY <= uSplatHeight;
 	bool  calm  = abs(vy) <= uSettleSpeed;

@@ -29,10 +29,10 @@
 * outcome is deterministic for a given seed and has the same uniform
 * distribution, but the concrete sequence differs from the CPU.
 *
-* Terrain note: the ground is the flat plane boundsMin.y. The optional
-* height-function terrain of the CPU solver is not migrated (the
-* application never sets one).
-*/
+ * Terrain note: collisions sample the shared R32F height texture over the
+ * terrain footprint. When no height texture is bound, the flat plane
+ * boundsMin.y is used as the fallback ground.
+ */
 
 layout(local_size_x = 64) in;
 
@@ -86,6 +86,10 @@ uniform float uSettleSpeed;     ///< Speed above which a particle counts as airb
 uniform float uAirY;            ///< Height of the lower edge of the airborne band.
 uniform float uRainSettleFraction; ///< Fraction of landing drops converted into settled water.
 uniform int   uSeed;             ///< Per-dispatch seed of the respawn RNG.
+uniform sampler2D uTerrainHeight; ///< R32F heightfield sampled in world-space XZ.
+uniform vec2 uTerrainMinXZ;      ///< Minimum corner of the terrain footprint in world XZ.
+uniform vec2 uTerrainMaxXZ;      ///< Maximum corner of the terrain footprint in world XZ.
+uniform int  uUseTerrainHeight;  ///< 1 when a valid height texture is bound, 0 otherwise.
 
 /**
 * @brief PCG-style integer hash for the respawn RNG.
@@ -109,7 +113,26 @@ float rand01(inout uint seed) {
 }
 
 /**
-* @brief Integrates one particle and resolves collisions and landing/settling.
+ * @brief Samples the terrain height at a world-space XZ position.
+ *
+ * Coordinates outside the footprint are clamped to the edge texels, so the
+ * container walls keep a consistent ground height beyond the heightfield.
+ * The result is never allowed below the container bottom.
+ *
+ * @param xz World-space XZ position of the particle.
+ * @return Terrain elevation in world units, or the fallback container bottom.
+ */
+float terrainHeightAt(vec2 xz) {
+	if (uUseTerrainHeight == 0)
+		return uBoundsMin.y;
+
+	vec2 extent = max(uTerrainMaxXZ - uTerrainMinXZ, vec2(1e-4));
+	vec2 uv		= clamp((xz - uTerrainMinXZ) / extent, 0.0, 1.0);
+	return max(texture(uTerrainHeight, uv).r, uBoundsMin.y);
+}
+
+/**
+ * @brief Integrates one particle and resolves collisions and landing/settling.
 *
 * All numeric constants (ground friction, recycle band, respawn height
 * band and respawn speed) mirror the hardcoded values of the CPU solver.
@@ -138,9 +161,9 @@ void main() {
 	pos += vel * uDt;
 	age += uDt;
 
-	// 3. Collisions: flat ground, walls and ceiling.
-	const float e      = uWallRestitution;
-	const float ground = uBoundsMin.y;
+	// 3. Collisions: terrain ground, walls and ceiling.
+	const float e	   = uWallRestitution;
+	float		ground = terrainHeightAt(pos.xz);
 	if (pos.y < ground) {
 		pos.y = ground;
 		if (vel.y < 0.0)
