@@ -1,0 +1,64 @@
+#pragma once
+#include <iostream>
+#include <memory>
+
+#include <sstream>
+#include <string>
+#include <vector>
+#include <cstdint>
+
+#include <glm.hpp>
+#include <gtc/type_ptr.hpp>
+#include <glad/gl.h>
+
+#include <Camera.hpp>
+#include <Environment.hpp>
+#include <Input.hpp>
+#include <Renderer.hpp>
+#include <Mesh.hpp>
+#include <Shader.hpp>
+#include <WWindow.hpp>
+
+
+class Terrain
+{
+    private:
+            Environment env;
+            WWindow::Config cfg;
+            Camera   cam;
+            Renderer renderer;
+            std::shared_ptr<Shader> shader;
+            std::shared_ptr<Mesh>   plane;
+            float rotY = 0.f;
+            float rotX = 0.f;
+            float size = 2;
+            float minHeight = 0.f;
+            float maxHeight = 0.f;
+            float originalPeak = 0.f;
+
+            std::vector<glm::vec3> points;
+            std::vector<uint32_t>  indices;
+			std::vector<glm::vec3> vertices;
+            std::vector<float> normals;
+            bool wireframe = false;
+
+            void getNormals();
+            void generateTerrain();
+            void parse(const std::string& mapPath);
+
+            const std::vector<float> extractNumbers(const std::string& input);
+            void initHooks();
+            void initEnv();
+
+    public:
+        Terrain(const std::string mapPath);
+        Terrain(const char* arg);
+        Terrain& operator=(Terrain&& t) noexcept;
+        Terrain(const Terrain&) = delete;
+        Terrain& operator=(const Terrain&) = delete;
+        ~Terrain() = default;
+
+        void addWindow(WWindow::Config &cfg);
+
+        void render();
+};
